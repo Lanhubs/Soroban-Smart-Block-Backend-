@@ -59,7 +59,7 @@ export async function decodeTransaction(rawXdr: string): Promise<DecodedTransact
   }
 
   const contract = await prisma.contract.findUnique({ where: { address: contractAddress } });
-  const decoded = decodeArgs(functionName, rawArgs, abi);
+  const decoded = decodeArgs(functionName, rawArgs, abi, contract?.tokenDecimals ?? undefined);
   const human = decoded
     ? renderHuman(functionName, decoded, abi, contract?.name, contract?.tokenDecimals ?? undefined)
     : `Called ${functionName} on ${contract?.name ?? contractAddress}`;
