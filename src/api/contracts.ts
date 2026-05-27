@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { prisma } from '../db';
+import { prismaRead, prismaWrite } from '../db';
 import { z } from 'zod';
 import { fetchContractSpec } from '../indexer/wasm-spec';
 import { abiRouter } from './abi';
@@ -18,7 +18,7 @@ const contractStatsQuerySchema = z.object({
 });
 
 export async function getContractFunctionStats(address: string, since?: Date) {
-  const contract = await prisma.contract.findUnique({
+  const contract = await prismaRead.contract.findUnique({
     where: { address },
     select: { address: true },
   });
@@ -27,7 +27,7 @@ export async function getContractFunctionStats(address: string, since?: Date) {
     return null;
   }
 
-  const stats = await prisma.transaction.groupBy({
+  const stats = await prismaRead.transaction.groupBy({
     by: ['functionName'],
     where: {
       contractAddress: address,
@@ -55,7 +55,7 @@ export async function getContractFunctionStats(address: string, since?: Date) {
 
 // GET /contracts
 contractRouter.get('/', async (_req: Request, res: Response) => {
-  const contracts = await prisma.contract.findMany({
+  const contracts = await prismaRead.contract.findMany({
     select: { address: true, name: true, description: true, isToken: true, tokenSymbol: true },
     orderBy: { createdAt: 'desc' },
   });
@@ -83,7 +83,7 @@ contractRouter.get('/:address/stats', async (req: Request, res: Response) => {
 
 // GET /contracts/:address
 contractRouter.get('/:address', async (req: Request, res: Response) => {
-  const contract = await prisma.contract.findUnique({
+  const contract = await prismaRead.contract.findUnique({
     where: { address: req.params.address },
     include: {
       transactions: { take: 10, orderBy: { ledger: 'desc' }, select: { hash: true, functionName: true, humanReadable: true, ledger: true } },
@@ -98,7 +98,7 @@ contractRouter.get('/:address', async (req: Request, res: Response) => {
 contractRouter.post('/', async (req: Request, res: Response) => {
   try {
     const data = abiSchema.parse(req.body);
-    const contract = await prisma.contract.upsert({
+    const contract = await prismaWrite.contract.upsert({
       where: { address: data.address },
       update: { name: data.name, description: data.description, abi: data.abi as object },
       create: { address: data.address, name: data.name, description: data.description, abi: data.abi as object },

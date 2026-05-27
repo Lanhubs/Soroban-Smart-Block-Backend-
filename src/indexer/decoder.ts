@@ -1,7 +1,7 @@
 import { xdr, scValToNative } from '@stellar/stellar-sdk';
 import { getContractAbi, decodeArgs, renderHuman } from './registry';
 import { parseInvokeHostFunction } from './xdr-parser';
-import { prisma } from '../db';
+import { prismaRead as prisma } from '../db';
 
 export interface DecodedTransaction {
   contractAddress: string | null;

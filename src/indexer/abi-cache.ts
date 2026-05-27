@@ -1,4 +1,4 @@
-import { prisma } from '../db';
+import { prismaRead, prismaWrite } from '../db';
 
 export interface AbiFunction {
   name: string;
@@ -26,7 +26,7 @@ function evictIfFull() {
 export async function getCachedAbi(address: string): Promise<ContractAbi | null> {
   if (cache.has(address)) return cache.get(address)!;
 
-  const row = await prisma.contract.findUnique({
+  const row = await prismaRead.contract.findUnique({
     where: { address },
     select: { abi: true },
   });
@@ -41,7 +41,7 @@ export async function getCachedAbi(address: string): Promise<ContractAbi | null>
 
 /** Write ABI to DB and update cache. */
 export async function setCachedAbi(address: string, abi: ContractAbi): Promise<void> {
-  await prisma.contract.upsert({
+  await prismaWrite.contract.upsert({
     where: { address },
     update: { abi: abi as object },
     create: { address, abi: abi as object },
@@ -53,7 +53,7 @@ export async function setCachedAbi(address: string, abi: ContractAbi): Promise<v
 
 /** Remove ABI from DB and cache. */
 export async function deleteCachedAbi(address: string): Promise<void> {
-  await prisma.contract.update({
+  await prismaWrite.contract.update({
     where: { address },
     data: { abi: undefined },
   });

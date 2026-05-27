@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { prisma } from '../db';
+import { prismaRead as prisma } from '../db';
 import { z } from 'zod';
 
 export const transactionRouter = Router();

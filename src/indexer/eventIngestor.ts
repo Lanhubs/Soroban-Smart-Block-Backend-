@@ -1,5 +1,5 @@
 import { xdr } from '@stellar/stellar-sdk';
-import { prisma } from '../db';
+import { prismaWrite as prisma } from '../db';
 import { decodeEvent } from './decoder';
 import { fetchEvents, LedgerEvent } from './rpc';
 

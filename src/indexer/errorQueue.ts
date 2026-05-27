@@ -1,4 +1,4 @@
-import { prisma } from '../db';
+import { prismaWrite as prisma } from '../db';
 import { Prisma } from '@prisma/client';
 
 const MAX_RETRIES = 3;

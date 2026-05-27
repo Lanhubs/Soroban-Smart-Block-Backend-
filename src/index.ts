@@ -4,7 +4,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import { config } from './config';
 import { router } from './api/router';
-import { prisma } from './db';
+import { prismaWrite as prisma } from './db';
 import { startIndexerService } from './indexer/indexer';
 import { tieredRateLimit } from './middleware/rateLimit';
 

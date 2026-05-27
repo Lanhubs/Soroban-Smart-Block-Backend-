@@ -1,5 +1,5 @@
 import '../config'; // load dotenv
-import { prisma } from '../db';
+import { prismaWrite as prisma } from '../db';
 import { runIndexer } from './indexer';
 
 async function main() {

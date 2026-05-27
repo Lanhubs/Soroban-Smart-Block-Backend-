@@ -12,6 +12,8 @@ export const config = {
   indexerStartLedger: parseInt(process.env.INDEXER_START_LEDGER ?? '0'),
   indexerPollIntervalMs: parseInt(process.env.INDEXER_POLL_INTERVAL_MS ?? '5000'),
   indexerBatchSize: parseInt(process.env.INDEXER_BATCH_SIZE ?? '100'),
+  indexerCatchupWorkers: Math.max(1, parseInt(process.env.INDEXER_CATCHUP_WORKERS ?? '4')),
   rateLimitWindowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS ?? '60000'),
   rateLimitMax: parseInt(process.env.RATE_LIMIT_MAX ?? '100'),
+  readReplicaUrl: process.env.READ_REPLICA_URL ?? process.env.DATABASE_URL ?? '',
 };
