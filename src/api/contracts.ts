@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../db';
 import { z } from 'zod';
+import { fetchContractSpec } from '../indexer/wasm-spec';
 
 export const contractRouter = Router();
 
@@ -18,6 +19,13 @@ contractRouter.get('/', async (_req: Request, res: Response) => {
     orderBy: { createdAt: 'desc' },
   });
   res.json(contracts);
+});
+
+// GET /contracts/:address/spec — fetch on-chain Wasm spec / ABI as JSON schema
+contractRouter.get('/:address/spec', async (req: Request, res: Response) => {
+  const schema = await fetchContractSpec(req.params.address);
+  if (!schema) return res.status(404).json({ error: 'Spec not found or contract has no embedded spec' });
+  res.json(schema);
 });
 
 // GET /contracts/:address
