@@ -60,6 +60,8 @@ model Transaction {
   status          String   // success | failed
   humanReadable   String?  // "Address X swapped 100 USDC → 98.7 XLM"
   feeCharged      String?
+  sorobanResources Json?   // #48: CPU, memory, ledger footprint metrics
+  failureReason   String?  // #49: human-readable failure explanation
   createdAt       DateTime @default(now())
 
   ledger   Ledger    @relation(fields: [ledgerSequence], references: [sequence])

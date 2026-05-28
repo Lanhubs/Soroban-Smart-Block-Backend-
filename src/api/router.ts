@@ -8,6 +8,7 @@ import { renderRouter } from './render';
 import { simulateRouter } from './simulate';
 import { verifyRouter } from './verify';
 import { dexRouter } from './dex';
+import { protocolRouter } from './protocol';
 import { nftRouter } from './nft';
 
 export const router = Router();
@@ -21,4 +22,5 @@ router.use('/render', renderRouter);
 router.use('/simulate', simulateRouter);
 router.use('/verify', verifyRouter);
 router.use('/dex', dexRouter);
+router.use('/protocol', protocolRouter);
 router.use('/nft', nftRouter);

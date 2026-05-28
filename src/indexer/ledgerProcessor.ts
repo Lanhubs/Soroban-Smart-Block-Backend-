@@ -3,6 +3,9 @@ import { fetchEvents, getTransaction } from './rpc';
 import { decodeTransaction } from './decoder';
 import { ingestEvents } from './eventIngestor';
 import { enqueueFailure } from './errorQueue';
+import { extractSorobanResources } from './resource-tracker';
+import { parseFailureReason, parseFailureReasonFromString } from './failure-parser';
+import { safeXdrParse } from './protocol-guard';
 
 /**
  * Fetch, decode, and persist all transactions and events for [start, end].
@@ -48,6 +51,28 @@ export async function processLedgerRange(start: number, end: number): Promise<vo
           })
         : { contractAddress: event.contractId, functionName: null, functionArgs: null, humanReadable: null };
 
+      // #48: Extract Soroban resource consumption from result meta XDR
+      const resultMetaXdr = (txResult as any)?.resultMetaXdr?.toXDR?.('base64') ?? '';
+      const sorobanResources = resultMetaXdr
+        ? safeXdrParse(() => extractSorobanResources(resultMetaXdr), null, 'SorobanResources')
+        : null;
+
+      // #49: Parse failure reason for failed transactions
+      const txStatus = (txResult as any)?.status === 'SUCCESS' ? 'success' : 'failed';
+      let failureReason: string | null = null;
+      if (txStatus === 'failed') {
+        const resultXdr = (txResult as any)?.resultXdr?.toXDR?.('base64') ?? '';
+        if (resultXdr) {
+          const parsed = safeXdrParse(() => parseFailureReason(resultXdr), null, 'FailureReason');
+          failureReason = parsed ? `${parsed.reason}${parsed.detail ? `: ${parsed.detail}` : ''}` : null;
+        }
+        // Fallback: parse from error string if available
+        if (!failureReason) {
+          const errStr = String((txResult as any)?.resultCode ?? (txResult as any)?.error ?? '');
+          if (errStr) failureReason = parseFailureReasonFromString(errStr);
+        }
+      }
+
       await prisma.transaction.upsert({
         where: { hash: event.transactionHash },
         update: {},
@@ -60,9 +85,11 @@ export async function processLedgerRange(start: number, end: number): Promise<vo
           functionName: decoded.functionName,
           functionArgs: decoded.functionArgs as object ?? undefined,
           rawXdr,
-          status: (txResult as any)?.status === 'SUCCESS' ? 'success' : 'failed',
+          status: txStatus,
           humanReadable: decoded.humanReadable,
           feeCharged: String((txResult as any)?.feeCharged ?? ''),
+          sorobanResources: sorobanResources as object ?? undefined,
+          failureReason,
         },
       });
     }
