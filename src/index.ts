@@ -13,6 +13,7 @@ import { replicaGuard } from './middleware/replicaGuard';
 import { coldStorageRouter } from './middleware/coldStorageRouter';
 import { swaggerSpec } from './indexer/swaggerSpec';
 import { attachWebSocketServer } from './ws/eventBroadcaster';
+import { warmTokenMetadataCache } from './indexer/token-metadata';
 
 const app = express();
 
@@ -39,6 +40,11 @@ app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 async function main() {
   await prisma.$connect();
   startIndexerService().catch((err) => console.error('Indexer service failed:', err));
+
+  // Pre-warm token metadata cache from DB so first requests are instant
+  warmTokenMetadataCache().catch((err) =>
+    console.warn('[token-metadata] Cache warm-up failed:', err),
+  );
 
   const httpServer = createServer(app);
   attachWebSocketServer(httpServer);

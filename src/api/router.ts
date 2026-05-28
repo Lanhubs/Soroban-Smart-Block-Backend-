@@ -16,6 +16,7 @@ import { assetsRouter } from './assets';
 import { sseRouter } from './sse';
 import { graphRouter } from './graph';
 import { virtualListRouter } from './virtualList';
+import { tokenMetadataRouter } from './token-metadata';
 
 export const router = Router();
 
@@ -36,3 +37,4 @@ router.use('/assets', assetsRouter);
 router.use('/sse', sseRouter);
 router.use('/graph', graphRouter);
 router.use('/virtual-list', virtualListRouter);
+router.use('/token-metadata', tokenMetadataRouter);
