@@ -14,6 +14,8 @@ const TX_SELECT = {
   status: true,
   humanReadable: true,
   feeCharged: true,
+  sorobanResources: true,  // #48
+  failureReason: true,     // #49
 };
 
 const listSchema = z.object({

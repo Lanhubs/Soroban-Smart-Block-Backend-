@@ -94,27 +94,27 @@ export function decodeEvent(
   topics: string[],
   data: string,
   contractName?: string | null
-): { eventType: string; decoded: Record<string, unknown> } {
+): { eventType: string; topicSymbol: string | null; decoded: Record<string, unknown> } {
   try {
     const topicVals = topics.map((t) => xdr.ScVal.fromXDR(t, 'base64'));
     const dataVal = xdr.ScVal.fromXDR(data, 'base64');
 
     // First topic is usually the event name symbol
-    const eventType = topicVals[0]
+    const rawSymbol = topicVals[0]
       ? String(scValToNative(topicVals[0]))
       : 'unknown';
 
-    const decoded: Record<string, unknown> = { event: eventType };
+    const decoded: Record<string, unknown> = { event: rawSymbol };
 
     // SEP-41 transfer event: topics = [Symbol("transfer"), from, to], data = amount
-    if (eventType === 'transfer' && topicVals.length >= 3) {
+    if (rawSymbol === 'transfer' && topicVals.length >= 3) {
       decoded.from = String(scValToNative(topicVals[1]));
       decoded.to = String(scValToNative(topicVals[2]));
       decoded.amount = String(scValToNative(dataVal));
-    } else if (eventType === 'mint' && topicVals.length >= 2) {
+    } else if (rawSymbol === 'mint' && topicVals.length >= 2) {
       decoded.to = String(scValToNative(topicVals[1]));
       decoded.amount = String(scValToNative(dataVal));
-    } else if (eventType === 'burn' && topicVals.length >= 2) {
+    } else if (rawSymbol === 'burn' && topicVals.length >= 2) {
       decoded.from = String(scValToNative(topicVals[1]));
       decoded.amount = String(scValToNative(dataVal));
     } else {
@@ -123,9 +123,9 @@ export function decodeEvent(
       decoded.data = scValToNative(dataVal);
     }
 
-    return { eventType: normalizeEventType(eventType), decoded };
+    return { eventType: normalizeEventType(rawSymbol), topicSymbol: rawSymbol, decoded };
   } catch {
-    return { eventType: 'unknown', decoded: { raw: { topics, data } } };
+    return { eventType: 'unknown', topicSymbol: null, decoded: { raw: { topics, data } } };
   }
 }
 

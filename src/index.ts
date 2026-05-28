@@ -3,6 +3,7 @@ import { createServer } from 'http';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import swaggerUi from 'swagger-ui-express';
 import { config } from './config';
 import { router } from './api/router';
 import { prismaWrite as prisma } from './db';
@@ -11,16 +12,23 @@ import { tieredRateLimit } from './middleware/rateLimit';
 import { metricsMiddleware } from './middleware/metricsMiddleware';
 import { sanitizeInputs } from './middleware/sanitize';
 import { registry, dbConnectionStatus } from './metrics';
+import { replicaGuard } from './middleware/replicaGuard';
+import { swaggerSpec } from './indexer/swaggerSpec';
 
 const app = express();
 
-app.use(helmet());
+app.use(helmet({ contentSecurityPolicy: false })); // CSP off so Swagger UI loads
 app.use(cors());
 app.use(morgan('dev'));
 app.use(express.json());
 app.use(tieredRateLimit);
 app.use(metricsMiddleware);
 app.use(sanitizeInputs);
+app.use(replicaGuard);
+
+// Interactive API docs
+app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+app.get('/api/docs.json', (_req, res) => res.json(swaggerSpec));
 
 app.use('/api/v1', router);
 

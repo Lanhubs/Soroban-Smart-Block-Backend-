@@ -3,6 +3,7 @@ import { prismaWrite as prisma } from '../db';
 import { decodeEvent } from './decoder';
 import { fetchEvents, LedgerEvent } from './rpc';
 import { broadcastEvent } from '../ws/eventBroadcaster';
+import { barrierUpsertContract, barrierUpsertEvent } from './writeBarrier';
 
 /**
  * Parse DiagnosticEvents from a raw TransactionMeta XDR (base64).
@@ -93,12 +94,8 @@ export async function ingestEventsFromMeta(
 async function storeEvent(event: LedgerEvent): Promise<number> {
   if (!event.contractId || !event.transactionHash) return 0;
 
-  // Ensure the contract row exists before inserting the event (FK constraint)
-  await prisma.contract.upsert({
-    where: { address: event.contractId },
-    update: {},
-    create: { address: event.contractId },
-  });
+  // Serialised upsert — prevents duplicate-key races from parallel workers
+  await barrierUpsertContract(event.contractId);
 
   // Ensure the transaction row exists (Event has a required FK to Transaction)
   const txExists = await prisma.transaction.findUnique({
@@ -107,7 +104,7 @@ async function storeEvent(event: LedgerEvent): Promise<number> {
   });
   if (!txExists) return 0; // transaction not yet indexed; skip
 
-  const { eventType, decoded } = decodeEvent(event.topics, event.data);
+  const { eventType, topicSymbol, decoded } = decodeEvent(event.topics, event.data);
 
   // Stable dedup key: hash + first topic (mirrors existing indexer logic)
   const id = `${event.transactionHash}-${event.topics[0] ?? '0'}`;
@@ -120,6 +117,7 @@ async function storeEvent(event: LedgerEvent): Promise<number> {
       transactionHash: event.transactionHash,
       contractAddress: event.contractId,
       eventType,
+      topicSymbol,
       topics: event.topics,
       data: { raw: event.data },
       decoded: decoded as object,
