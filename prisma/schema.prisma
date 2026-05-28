@@ -26,21 +26,20 @@ model Ledger {
 }
 
 model Contract {
-  id            String   @id @default(cuid())
-  address       String   @unique
-  name          String?
-  description   String?
-  abi           Json?    // ABI-like metadata: functions, events, types
-  isToken       Boolean  @default(false)
-  tokenSymbol   String?
-  tokenName     String?
-  tokenDecimals Int?
-  wasmHash    String?  // fuzzy hash of compiled Wasm bytecode for similarity detection
-  isVerified  Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id                 String   @id @default(cuid())
+  address            String   @unique
+  name               String?
+  description        String?
+  abi                Json?    // ABI-like metadata: functions, events, types
+  functionSignatures Json?    // decoded function signatures: [{ name, inputs, outputs }]
+  isToken            Boolean  @default(false)
+  tokenSymbol        String?
+  tokenName          String?
+  tokenDecimals      Int?
+  wasmHash           String?  // fuzzy hash of compiled Wasm bytecode for similarity detection
+  isVerified         Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   transactions Transaction[]
   events       Event[]
@@ -61,6 +60,8 @@ model Transaction {
   status          String   // success | failed
   humanReadable   String?  // "Address X swapped 100 USDC → 98.7 XLM"
   feeCharged      String?
+  sorobanResources Json?   // #48: CPU, memory, ledger footprint metrics
+  failureReason   String?  // #49: human-readable failure explanation
   createdAt       DateTime @default(now())
 
   ledger   Ledger    @relation(fields: [ledgerSequence], references: [sequence])
@@ -84,8 +85,9 @@ model Event {
   transactionHash String
   contractAddress String
   eventType       String   // transfer | swap | mint | burn | custom
-  topics          Json     // raw topics
-  data            Json     // raw data
+  topicSymbol     String?  // first topic decoded as symbol (e.g. "transfer", "mint_pass")
+  topics          Json     // raw topics (base64 XDR array)
+  data            Json     // raw data (base64 XDR)
   decoded         Json?    // human-readable decoded event
   ledgerSequence  Int                      // FK → Ledger.sequence
   ledgerCloseTime DateTime
@@ -98,8 +100,14 @@ model Event {
   @@index([transactionHash])
   @@index([contractAddress])
   @@index([eventType])
-  @@index([ledgerSequence])               // sub-second lookup by ledger number
-  @@index([contractAddress, ledgerSequence])
+  @@index([topicSymbol])
+  @@index([ledgerSequence])
+  // Heavy-use composite: filter by contract + topic symbol (event name)
+  @@index([contractAddress, topicSymbol])
+  // Cursor-based pagination: contract + ledger desc
+  @@index([contractAddress, ledgerSequence, id])
+  // Filter by contract + event type + ledger for time-range queries
+  @@index([contractAddress, eventType, ledgerSequence])
 }
 
 // Custom event symbol → template bindings submitted by verified project creators
