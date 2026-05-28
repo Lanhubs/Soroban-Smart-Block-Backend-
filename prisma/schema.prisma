@@ -62,6 +62,7 @@ model Transaction {
   feeCharged      String?
   sorobanResources Json?   // #48: CPU, memory, ledger footprint metrics
   failureReason   String?  // #49: human-readable failure explanation
+  flashLoanAlert  Boolean  @default(false) // #137: flash loan attack detected
   createdAt       DateTime @default(now())
 
   ledger   Ledger    @relation(fields: [ledgerSequence], references: [sequence])

@@ -1,5 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { detectSpikes } from '../indexer/spikeDetector';
+import { detectFlashLoans } from '../indexer/flashLoanDetector';
+import { prismaRead as prisma } from '../db';
 
 /**
  * @swagger
@@ -62,5 +64,57 @@ alertsRouter.get('/spikes', async (req: Request, res: Response) => {
   const threshold = parseFloat(String(req.query.threshold ?? '3.0'));
 
   const alerts = await detectSpikes(window, history, isNaN(threshold) ? 3.0 : threshold);
+  res.json({ alerts });
+});
+
+/**
+ * @swagger
+ * /api/v1/alerts/flash-loans:
+ *   get:
+ *     summary: Detect flash loan attack signatures
+ *     tags: [Alerts]
+ *     parameters:
+ *       - in: query
+ *         name: ledger
+ *         schema:
+ *           type: integer
+ *         description: Specific ledger to analyze (latest if omitted)
+ *     responses:
+ *       200:
+ *         description: Flash loan alerts
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 alerts:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       ledger: { type: integer }
+ *                       poolAddress: { type: string }
+ *                       borrowAmount: { type: string }
+ *                       returnAmount: { type: string }
+ *                       variance: { type: number }
+ *                       severity: { type: string, enum: [low, medium, high] }
+ *                       transactions: { type: array, items: { type: string } }
+ */
+alertsRouter.get('/flash-loans', async (req: Request, res: Response) => {
+  let ledger = parseInt(String(req.query.ledger ?? '0'), 10);
+
+  if (ledger === 0) {
+    const latest = await prisma.ledger.findFirst({
+      orderBy: { sequence: 'desc' },
+      select: { sequence: true },
+    });
+    ledger = latest?.sequence ?? 0;
+  }
+
+  if (ledger === 0) {
+    return res.json({ alerts: [] });
+  }
+
+  const alerts = await detectFlashLoans(ledger);
   res.json({ alerts });
 });
