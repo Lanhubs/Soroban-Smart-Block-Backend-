@@ -542,6 +542,57 @@ model WebhookDelivery {
   @@index([eventId])
 }
 
+// Gas cost analytics snapshot — pre-aggregated fee stats per time bucket
+model GasAnalyticsSnapshot {
+  id          String   @id @default(cuid())
+  bucket      String   // "hour" | "day" | "week"
+  bucketStart DateTime // start of the time bucket
+  bucketEnd   DateTime // end of the time bucket
+  avgFee      Float    // average fee charged (in stroops)
+  medianFee   Float    // median fee charged
+  peakFee     Float    // maximum fee charged
+  minFee      Float    // minimum fee charged
+  txCount     Int      // number of transactions in bucket
+  createdAt   DateTime @default(now())
+
+  @@unique([bucket, bucketStart])
+  @@index([bucket, bucketStart])
+}
+
+// Portfolio snapshot — token holdings with fiat valuation per wallet/contract
+model PortfolioSnapshot {
+  id              String   @id @default(cuid())
+  contractAddress String   // SAC contract address
+  assetCode       String?
+  assetIssuer     String?
+  estimatedVolume Float    // raw token quantity
+  priceXlm        Float?   // price in XLM
+  priceUsd        Float?   // price in USD
+  valueXlm        Float?   // estimatedVolume * priceXlm
+  valueUsd        Float?   // estimatedVolume * priceUsd
+  snapshotAt      DateTime @default(now())
+
+  @@index([contractAddress])
+  @@index([snapshotAt])
+}
+
+// Persisted volume spike alert — one row per detected spike
+model VolumeAlert {
+  id              String   @id @default(cuid())
+  contractAddress String
+  currentCount    Int      // tx count in the observation window
+  baseline        Float    // historical mean
+  stdDev          Float    // historical standard deviation
+  zScore          Float    // (currentCount - baseline) / stdDev
+  windowMinutes   Int      // observation window size
+  detectedAt      DateTime @default(now())
+  acknowledged    Boolean  @default(false)
+
+  @@index([contractAddress])
+  @@index([detectedAt])
+  @@index([zScore])
+}
+
 // i18n translation dictionary
 model TranslationKey {
   id              String   @id @default(cuid())

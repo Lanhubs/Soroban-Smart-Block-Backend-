@@ -156,3 +156,57 @@ alertsRouter.get('/reentrancy', async (req: Request, res: Response) => {
 
   res.json({ alerts });
 });
+
+/**
+ * @swagger
+ * /api/v1/alerts/volume:
+ *   get:
+ *     summary: List persisted volume spike alerts
+ *     tags: [Alerts]
+ *     parameters:
+ *       - in: query
+ *         name: contract
+ *         schema: { type: string }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 20 }
+ *       - in: query
+ *         name: acknowledged
+ *         schema: { type: boolean }
+ *     responses:
+ *       200:
+ *         description: Volume spike alerts
+ */
+alertsRouter.get('/volume', async (req: Request, res: Response) => {
+  const contract = req.query.contract ? String(req.query.contract) : undefined;
+  const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit ?? '20'), 10)));
+  const acknowledged = req.query.acknowledged !== undefined
+    ? req.query.acknowledged === 'true'
+    : undefined;
+
+  const alerts = await prisma.volumeAlert.findMany({
+    where: {
+      ...(contract ? { contractAddress: contract } : {}),
+      ...(acknowledged !== undefined ? { acknowledged } : {}),
+    },
+    orderBy: { detectedAt: 'desc' },
+    take: limit,
+  });
+
+  res.json({ alerts });
+});
+
+/**
+ * PATCH /api/v1/alerts/volume/:id/acknowledge — mark a volume alert as acknowledged
+ */
+alertsRouter.patch('/volume/:id/acknowledge', async (req: Request, res: Response) => {
+  try {
+    const alert = await prisma.volumeAlert.update({
+      where: { id: req.params.id },
+      data: { acknowledged: true },
+    });
+    res.json(alert);
+  } catch {
+    res.status(404).json({ error: 'Alert not found' });
+  }
+});

@@ -18,6 +18,9 @@ import { swaggerSpec } from './indexer/swaggerSpec';
 import { attachWebSocketServer } from './ws/eventBroadcaster';
 import { warmTokenMetadataCache } from './indexer/token-metadata';
 import { cacheConnect } from './cache';
+import { startGasAnalyticsScheduler } from './indexer/gasAnalytics';
+import { startPortfolioScanner } from './indexer/portfolioScanner';
+import { startVolumeAlertScheduler } from './indexer/volumeAlertRunner';
 
 const app = express();
 
@@ -59,6 +62,11 @@ async function main() {
   warmTokenMetadataCache().catch((err) =>
     console.warn('[token-metadata] Cache warm-up failed:', err),
   );
+
+  // Analytics schedulers
+  startGasAnalyticsScheduler();
+  startPortfolioScanner();
+  startVolumeAlertScheduler();
 
   const httpServer = createServer(app);
   attachWebSocketServer(httpServer);

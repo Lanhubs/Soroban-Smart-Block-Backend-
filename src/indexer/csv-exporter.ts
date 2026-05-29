@@ -148,11 +148,75 @@ function buildEventWhere(f: Record<string, unknown>) {
 // Job runner
 // ---------------------------------------------------------------------------
 
+const WALLET_HISTORY_HEADERS = [
+  'type', 'hash', 'ledgerSequence', 'ledgerCloseTime',
+  'contractAddress', 'functionName', 'status', 'humanReadable',
+  'feeCharged', 'createdAt',
+];
+
+async function streamWalletHistory(
+  filters: Record<string, unknown>,
+  out: Writable,
+): Promise<number> {
+  const address = String(filters.account ?? '');
+  if (!address) throw new Error('account filter is required for wallet history export');
+
+  out.write(WALLET_HISTORY_HEADERS.join(',') + '\n');
+
+  const where = {
+    sourceAccount: address,
+    ...((filters.ledgerMin !== undefined || filters.ledgerMax !== undefined) && {
+      ledgerSequence: {
+        ...(filters.ledgerMin !== undefined && { gte: Number(filters.ledgerMin) }),
+        ...(filters.ledgerMax !== undefined && { lte: Number(filters.ledgerMax) }),
+      },
+    }),
+  };
+
+  let cursor: string | undefined;
+  let total = 0;
+
+  while (true) {
+    const rows = await prismaRead.transaction.findMany({
+      where,
+      orderBy: [{ ledgerSequence: 'asc' }, { id: 'asc' }],
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      take: BATCH_SIZE,
+      select: {
+        id: true,
+        hash: true,
+        ledgerSequence: true,
+        ledgerCloseTime: true,
+        contractAddress: true,
+        functionName: true,
+        status: true,
+        humanReadable: true,
+        feeCharged: true,
+        createdAt: true,
+      },
+    });
+
+    if (rows.length === 0) break;
+
+    for (const row of rows) {
+      const record = { type: 'soroban', ...row };
+      out.write(rowToCsv(WALLET_HISTORY_HEADERS, record as any) + '\n');
+    }
+
+    total += rows.length;
+    cursor = rows[rows.length - 1].id;
+
+    if (rows.length < BATCH_SIZE) break;
+  }
+
+  return total;
+}
+
 /**
  * Enqueue a new export job and return its id.
  */
 export async function enqueueExport(
-  exportType: 'transactions' | 'events',
+  exportType: 'transactions' | 'events' | 'wallet_history',
   filters: Record<string, unknown> = {},
 ): Promise<string> {
   const job = await prismaWrite.exportJob.create({
@@ -185,6 +249,8 @@ export async function runExportJob(jobId: string): Promise<void> {
 
     if (job.exportType === 'transactions') {
       rowCount = await streamTransactions(filters, fileStream);
+    } else if (job.exportType === 'wallet_history') {
+      rowCount = await streamWalletHistory(filters, fileStream);
     } else {
       rowCount = await streamEvents(filters, fileStream);
     }
