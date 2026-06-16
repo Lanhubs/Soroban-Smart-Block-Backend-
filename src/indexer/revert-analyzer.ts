@@ -3,7 +3,7 @@
  *
  * Classifies error type, reconstructs call stack, and suggests fixes.
  */
-import { SorobanRpc, xdr } from '@stellar/stellar-sdk';
+import { SorobanRpc, StrKey, xdr } from '@stellar/stellar-sdk';
 import { parseFailureReasonFromString } from './failure-parser';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -122,7 +122,6 @@ function extractCallStack(
     let contractId = 'system';
     try {
       if (contractRaw) {
-        const { StrKey } = require('@stellar/stellar-sdk') as typeof import('@stellar/stellar-sdk');
         contractId = StrKey.encodeContract(contractRaw as unknown as Buffer);
       }
     } catch { /* ignore */ }
