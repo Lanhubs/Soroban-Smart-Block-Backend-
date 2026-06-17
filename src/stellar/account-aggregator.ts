@@ -320,7 +320,7 @@ async function buildMetadata(address: string): Promise<AccountMetadata> {
     firstSeen: firstSeen?.toISOString() ?? null,
     lastActivity: lastActivity?.toISOString() ?? null,
     accountAge,
-    totalTransactions: sorobanCount + classicOps.records.length,
+    totalTransactions: sorobanCount + (classicOps?.records?.length ?? 0),
   };
 }
 

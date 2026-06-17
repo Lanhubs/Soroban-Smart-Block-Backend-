@@ -54,8 +54,9 @@ vi.mock('../src/stellar/horizon-client', () => ({
 import { prismaRead as prisma } from '../src/db';
 import { fetchHorizonAccount } from '../src/stellar/horizon-client';
 import { stellarRouter } from '../src/api/stellar';
+import { Keypair } from '@stellar/stellar-sdk';
 
-const G_ADDRESS = 'GCKFBEIYTKP6QXIZZ4LF5CM2WC6QHNEACV3EX2ZJOXZJD6FQX2QZJOXZ';
+const G_ADDRESS = Keypair.random().publicKey();
 
 let server: Server;
 let baseUrl: string;

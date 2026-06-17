@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Keypair } from '@stellar/stellar-sdk';
 
 vi.mock('../src/db', () => ({
   prismaRead: {
@@ -26,11 +27,12 @@ import { prismaRead as prisma, prismaWrite } from '../src/db';
 import {
   fetchHorizonAccount,
   fetchHorizonClaimableBalances,
+  fetchHorizonOperations,
   verifyHomeDomain,
 } from '../src/stellar/horizon-client';
 import { getUnifiedAccountView } from '../src/stellar/account-aggregator';
 
-const G_ADDRESS = 'GCKFBEIYTKP6QXIZZ4LF5CM2WC6QHNEACV3EX2ZJOXZJD6FQX2QZJOXZ';
+const G_ADDRESS = Keypair.random().publicKey();
 
 describe('account-aggregator', () => {
   beforeEach(() => {
@@ -72,11 +74,12 @@ describe('account-aggregator', () => {
         id: '0000000000000000000000000000000000000000000000000000000000000001',
         asset: 'native',
         amount: '100',
-        claimants: [{ destination: 'GCKFBEIYTKP6QXIZZ4LF5CM2WC6QHNEACV3EX2ZJOXZJD6FQX2QZJOXZ', predicate: {} }],
+        claimants: [{ destination: G_ADDRESS, predicate: {} }],
       },
     ]);
 
     vi.mocked(verifyHomeDomain).mockResolvedValue(true);
+    vi.mocked(fetchHorizonOperations).mockResolvedValue({ records: [], nextCursor: null });
     vi.mocked(prisma.contract.findMany).mockResolvedValue([]);
     vi.mocked(prisma.wasmUpgradeHistory.findMany).mockResolvedValue([]);
     vi.mocked(prisma.transaction.findMany).mockResolvedValue([]);
@@ -106,6 +109,7 @@ describe('account-aggregator', () => {
   it('returns empty classic view for unfunded account', async () => {
     vi.mocked(fetchHorizonAccount).mockResolvedValue(null);
     vi.mocked(fetchHorizonClaimableBalances).mockResolvedValue([]);
+    vi.mocked(fetchHorizonOperations).mockResolvedValue({ records: [], nextCursor: null });
     vi.mocked(prisma.contract.findMany).mockResolvedValue([]);
     vi.mocked(prisma.wasmUpgradeHistory.findMany).mockResolvedValue([]);
     vi.mocked(prisma.transaction.findMany).mockResolvedValue([]);
