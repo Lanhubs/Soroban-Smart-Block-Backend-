@@ -504,6 +504,109 @@ model VerificationJob {
   @@index([status])
 }
 
+// Contract source analysis storage for decompiled/verified sources
+model ContractSource {
+  id               String   @id @default(uuid())
+  contractAddress  String   @unique
+  sourceType       String
+  language         String?
+  compilerVersion  String?
+  wasmHash         String
+  bytecodeSize     Int
+  functions        Json?
+  imports          Json?
+  exports          Json?
+  storageVariables Json?
+  events           Json?
+  errors           Json?
+  metadata         Json?
+  decompiledAt     DateTime @default(now())
+  verifiedAt       DateTime?
+  updatedAt        DateTime @updatedAt
+
+  functionDetails  FunctionDetail[]
+
+  @@index([contractAddress])
+}
+
+model FunctionDetail {
+  id                    Int     @id @default(autoincrement())
+  contractId            String
+  name                  String
+  selector              String?
+  visibility            String? @default("public")
+  params                Json?
+  returns               Json?
+  pseudoCode            String?
+  cfg                   Json?
+  complexity            String?
+  linesOfCode           Int?
+  cyclomaticComplexity  Int?
+  calls                 Json?
+  storageOperations     Json?
+  hostCalls             Json?
+  sourceMap             Json?
+
+  contract              ContractSource @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@unique([contractId, name])
+  @@index([contractId])
+}
+
+model ContractCallGraph {
+  id               Int    @id @default(autoincrement())
+  contractAddress  String
+  adjacencyList    Json
+  entryPoints      String[]
+  depth            Int
+  numNodes         Int
+  numEdges         Int
+  computedAt       DateTime @default(now())
+
+  @@index([contractAddress])
+}
+
+model CrossContractReference {
+  id               Int    @id @default(autoincrement())
+  sourceContract   String
+  sourceFunction   String?
+  targetContract   String
+  targetFunction   String?
+  referenceType    String
+  callCount        Int    @default(0)
+  lastDetected     DateTime @default(now())
+
+  @@index([sourceContract])
+  @@index([targetContract])
+}
+
+model CodeSimilarityScore {
+  id                     Int    @id @default(autoincrement())
+  contractAddress        String
+  templateName           String
+  similarityPercentage   Float
+  matchedAreas           String[]
+  modifiedAreas          String[]
+  diffHighlights         Json?
+  computedAt             DateTime @default(now())
+
+  @@index([contractAddress])
+  @@index([templateName])
+}
+
+model SearchIndexEntry {
+  id               Int    @id @default(autoincrement())
+  contractAddress  String
+  contentType      String
+  content          String
+  tokens           Json?  // tsvector stored as text/json for portability
+  metadata         Json?
+  indexedAt        DateTime @default(now())
+
+  @@index([contractAddress])
+  @@index([contentType])
+}
+
 // Persistent contract state key tracking for eviction monitoring (#57, #58)
 model ContractState {
   id                String   @id @default(cuid())
