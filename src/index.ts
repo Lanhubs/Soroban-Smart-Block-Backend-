@@ -28,7 +28,9 @@ import { startNetworkIndexer } from './indexer/network-indexer';
 import { startEmergencyIndexer } from './indexer/emergency-indexer';
 import { startHealthScoreScheduler } from './indexer/health-scorer';
 import { startPrivacyDetector } from './indexer/privacy-background-detector';
+import { startComposabilityIndexer } from './indexer/composability-indexer';
 import { attachPrivacyWebSocket } from './ws/privacyBroadcaster';
+import { attachComposabilityWebSocket } from './ws/composabilityBroadcaster';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './logger';
 import { feedOrchestrator } from './feed/orchestrator';
@@ -97,11 +99,17 @@ async function main() {
     } catch (err) {
       logger.warn('Privacy detector failed to start', { error: String(err) });
     }
+    try {
+      startComposabilityIndexer();
+    } catch (err) {
+      logger.warn('Composability indexer failed to start', { error: String(err) });
+    }
   }
 
   const httpServer = createServer(app);
   attachWebSocketServer(httpServer);
   attachPrivacyWebSocket(httpServer);
+  attachComposabilityWebSocket(httpServer);
 
   // Initialize Feed Orchestrator with WebSocket support
   await feedOrchestrator.initialize(httpServer);
