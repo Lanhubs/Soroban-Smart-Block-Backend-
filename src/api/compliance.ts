@@ -78,13 +78,6 @@ complianceRouter.get('/', (_req: Request, res: Response) => {
 
 // ── Screening Endpoints ───────────────────────────────────────────────────────
 
-const stellarAddressRegex = /^G[A-Z0-9]{55}$/i;
-const contractAddressRegex = /^C[A-Z0-9]{55}$/i;
-
-function isValidAddress(addr: string): boolean {
-  return stellarAddressRegex.test(addr) || contractAddressRegex.test(addr) || addr.startsWith('0x');
-}
-
 complianceRouter.get(
   '/screen/:address',
   asyncHandler(async (req: Request, res: Response) => {

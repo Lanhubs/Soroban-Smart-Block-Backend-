@@ -1,5 +1,4 @@
 import { prismaWrite, prismaRead } from '../../db';
-import { logger } from '../../logger';
 import { recordAudit } from './audit';
 
 interface ReportParams {

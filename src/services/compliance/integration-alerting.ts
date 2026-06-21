@@ -33,7 +33,7 @@ interface SiemConfig {
 let pagerDutyConfig: PagerDutyConfig = { enabled: false };
 let slackConfig: SlackConfig = { enabled: false };
 let emailConfig: EmailConfig = { enabled: false };
-let siemConfigs: SiemConfig[] = [];
+const siemConfigs: SiemConfig[] = [];
 
 export function configurePagerDuty(config: PagerDutyConfig): void {
   pagerDutyConfig = config;

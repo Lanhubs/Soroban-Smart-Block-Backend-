@@ -1,4 +1,3 @@
-import { prismaWrite } from '../../db';
 import { logger } from '../../logger';
 
 export type AuditAction =

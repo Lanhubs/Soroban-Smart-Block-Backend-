@@ -1,4 +1,3 @@
-import { logger } from '../../logger';
 import { recordAudit } from './audit';
 
 interface BlockingRule {

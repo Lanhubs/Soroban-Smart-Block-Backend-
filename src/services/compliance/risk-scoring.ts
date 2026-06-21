@@ -1,5 +1,4 @@
 import { prismaRead } from '../../db';
-import { logger } from '../../logger';
 
 export interface RiskFactor {
   name: string;

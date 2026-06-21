@@ -177,7 +177,7 @@ export async function screenAddress(
           });
           continue;
         }
-      } catch { }
+      } catch { /* regex error */ }
     }
 
     if (entry.name) {

@@ -1,6 +1,3 @@
-import { prismaRead } from '../../db';
-import { logger } from '../../logger';
-
 interface AddressCluster {
   clusterId: string;
   addresses: string[];
