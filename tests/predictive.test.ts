@@ -1,6 +1,24 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll } from 'vitest';
 import request from 'supertest';
 import express from 'express';
+
+vi.mock('../src/db', () => ({
+  __esModule: true,
+  default: {
+    featureDefinition: { findUnique: vi.fn().mockResolvedValue(null) },
+    featureValue: { findMany: vi.fn().mockResolvedValue([]) },
+    predictiveApiKey: {
+      create: vi.fn().mockImplementation(({ data }: any) =>
+        Promise.resolve({ key: data.key, tier: data.tier }),
+      ),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    predictionScenario: { create: vi.fn().mockResolvedValue({ id: 'scenario-1' }) },
+  },
+  prismaRead: {},
+  prismaWrite: {},
+}));
+
 import { predictRouter } from '../src/api/predict';
 
 const app = express();
@@ -42,7 +60,7 @@ describe('Predictive Analytics Engine API', () => {
     
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(res.body.message).toContain('recover');
+    expect(res.body.message.toLowerCase()).toContain('recover');
     expect(res.body.predictions.length).toBe(14);
   });
 

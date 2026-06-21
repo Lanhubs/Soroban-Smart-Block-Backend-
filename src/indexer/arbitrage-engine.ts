@@ -184,46 +184,51 @@ export function detectNegativeCycles(graph: PriceGraph, maxHops = 5): ArbitrageC
       }
     }
 
-    // Check for negative cycles (arbitrage opportunities)
+    // Check for negative cycles via Nth-pass relaxation (standard Bellman-Ford)
     for (const [edgeKey, weight] of graph.edges) {
       const [from, to, poolId] = edgeKey.split(':');
       const df = dist.get(from) ?? Infinity;
       const dt = dist.get(to) ?? Infinity;
-      if (df + weight < dt && to === startToken && df !== Infinity) {
-        // Reconstruct cycle path
-        const path: string[] = [startToken];
-        const poolIds: string[] = [];
-        const dexNames: string[] = [];
-
-        let cur = from;
-        let safetyNet = 0;
-        while (cur !== startToken && safetyNet < maxHops) {
-          path.unshift(cur);
+      if (df + weight < dt && df !== Infinity) {
+        // Negative cycle reachable from startToken.
+        // Step 1: follow prev from `to` N times to land inside the cycle
+        let cur = to;
+        for (let i = 0; i < tokens.length; i++) {
           const p = prev.get(cur);
           if (!p) break;
-          poolIds.unshift(p.poolId);
-          dexNames.unshift(p.dex);
           cur = p.token;
-          safetyNet++;
         }
-        poolIds.push(poolId);
-        const node = Array.from(graph.nodes.get(from) ?? []).find((n) => n.poolId === poolId);
-        dexNames.push(node?.dexName ?? '');
+        const cycleNode = cur;
+        // Step 2: collect the cycle by tracing prev until we return
+        const revPath: string[] = [];
+        const poolIds: string[] = [];
+        const dexNames: string[] = [];
+        do {
+          revPath.push(cur);
+          const p = prev.get(cur);
+          if (!p) break;
+          poolIds.push(p.poolId);
+          dexNames.push(p.dex);
+          cur = p.token;
+        } while (cur !== cycleNode);
+        if (revPath.length < 2) continue;
 
-        const cycleKey = [...path].sort().join('-');
-        if (!seen.has(cycleKey) && path.length >= 2) {
+        // Reverse path for forward ordering; poolIds stay in original order
+        const cyclePath = revPath.reverse();
+        const fullPath = [...cyclePath, cyclePath[0]];
+
+        const cycleKey = [...cyclePath].sort().join('-');
+        if (!seen.has(cycleKey)) {
           seen.add(cycleKey);
-          // Calculate profit multiplier from accumulated log-price
           const totalLogCost = poolIds.reduce((acc, pid, idx) => {
-            const tk = path[idx];
-            const tkNext = path[idx + 1] ?? startToken;
+            const tk = fullPath[idx];
+            const tkNext = fullPath[idx + 1];
             const w = graph.edges.get(`${tk}:${tkNext}:${pid}`) ?? 0;
             return acc + w;
           }, 0);
           const profitMultiplier = Math.exp(-totalLogCost);
           if (profitMultiplier > 1.0001) {
-            // minimum 0.01% profit threshold
-            cycles.push({ path: [...path, startToken], poolIds, dexNames, profitMultiplier });
+            cycles.push({ path: fullPath, poolIds, dexNames, profitMultiplier });
           }
         }
       }
