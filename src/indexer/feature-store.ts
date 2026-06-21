@@ -1,5 +1,4 @@
 import prisma from '../db';
-import { Ledger } from '@prisma/client';
 
 export class FeatureStore {
   /**

@@ -1544,7 +1544,7 @@ export class SandboxEngine {
     const results: unknown[] = [];
     let passed = true;
     let failure: string | null = null;
-    let runtimeSessionId =
+    const runtimeSessionId =
       typeof session === 'object' && 'session' in session
         ? session.session.id
         : (session as SessionSummary).id;

@@ -3,7 +3,6 @@ import {
   ChainId,
   ChainReputationData,
   EndorsementInput,
-  TrustEdgeInput,
   TrustGraph,
   TrustPath,
 } from './types';

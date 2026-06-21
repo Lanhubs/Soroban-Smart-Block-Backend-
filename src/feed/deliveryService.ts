@@ -43,7 +43,7 @@ export class DeliveryService extends EventEmitter {
       }
 
       // Handle batching
-      if (subscription.batchSize > 1) {
+      if ((subscription.batchSize ?? 0) > 1) {
         await this.addToBatch(subscription, message);
         return;
       }

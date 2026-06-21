@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { parseWasmSpec, fetchContractSpec } from '../../src/indexer/wasm-spec';
-import { xdr, contract } from '@stellar/stellar-sdk';
+import { contract } from '@stellar/stellar-sdk';
 
 // Minimal Wasm binary containing a single `contractspecv0` custom section.
 // The section encodes one ScSpecEntry: function hello(name: string) -> symbol

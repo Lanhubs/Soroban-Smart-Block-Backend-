@@ -11,13 +11,7 @@ import multer from 'multer';
 import * as path from 'path';
 import * as os from 'os';
 import { z } from 'zod';
-import {
-  extractArchive,
-  compileSandboxed,
-  hashFile,
-  extractSourceFiles,
-  cleanupDir,
-} from './compiler';
+import { extractArchive, compileSandboxed, extractSourceFiles, cleanupDir } from './compiler';
 
 export const compilerRouter = Router();
 

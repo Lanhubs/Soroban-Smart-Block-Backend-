@@ -249,5 +249,6 @@ transactionRouter.get(
     });
     if (!tx) return res.status(404).json({ error: 'Transaction not found' });
 
-  res.json(tx);
-});
+    res.json(tx);
+  }),
+);

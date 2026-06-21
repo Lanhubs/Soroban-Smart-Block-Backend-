@@ -11,7 +11,6 @@ import {
   analyzeCheckedArithmetic,
   CheckedArithmeticAnalysis,
   didOverflow,
-  getOverflowedOperations,
 } from './checked-arithmetic-decoder';
 import { prismaRead as prisma } from '../db';
 

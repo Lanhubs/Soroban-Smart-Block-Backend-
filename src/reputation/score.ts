@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { Keypair } from '@stellar/stellar-sdk';
 import { prismaRead, prismaWrite } from '../db';
 import {
   Address,
@@ -7,7 +8,6 @@ import {
   ChainId,
   ChainReputationData,
   ChainScore,
-  EndorsementInput,
   LeaderboardEntry,
   LinkedIdentityInput,
   OracleReputationResponse,
@@ -15,7 +15,6 @@ import {
   ReputationProof,
   ScoreResult,
   SybilAssessment,
-  TrustEdgeInput,
   VerifiedIdentityLink,
   VerifiableCredential,
   OnChainAttestation,
@@ -544,7 +543,6 @@ export function verifyStellarSignedMessage(
   signature: string,
 ): boolean {
   try {
-    const { Keypair } = require('@stellar/stellar-sdk') as typeof import('@stellar/stellar-sdk');
     const signatureBuffer = decodeSignature(signature);
     return Keypair.fromPublicKey(address).verify(Buffer.from(message), signatureBuffer);
   } catch {

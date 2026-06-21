@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import express from 'express';
 import { createServer, type Server } from 'node:http';
 import { AddressInfo } from 'node:net';

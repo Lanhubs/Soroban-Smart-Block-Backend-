@@ -6,7 +6,6 @@
  * reporting across the network.
  */
 import { Router, Request, Response } from 'express';
-import { z } from 'zod';
 
 export const storageRouter = Router();
 

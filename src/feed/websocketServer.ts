@@ -1,6 +1,5 @@
 import WebSocket from 'ws';
 import { IncomingMessage } from 'http';
-import { URLSearchParams } from 'url';
 import { ChannelManager } from '../feed/channelManager';
 import { SubscriptionManager } from '../feed/subscriptionManager';
 import { deliveryService } from '../feed/deliveryService';
@@ -10,7 +9,7 @@ interface WebSocketConnection {
   ws: WebSocket;
   channels: string[];
   filters: any;
-  lastSequence?: bigint;
+  lastSequence?: number;
 }
 
 export class FeedWebSocketServer {
@@ -172,10 +171,7 @@ export class FeedWebSocketServer {
     if (lastSequence) {
       try {
         // Fetch missed messages since lastSequence
-        const missedMessages = await this.getMissedMessages(
-          connection.channels,
-          BigInt(lastSequence),
-        );
+        const missedMessages = await this.getMissedMessages(connection.channels, lastSequence);
 
         for (const msg of missedMessages) {
           if (this.subscriptionManager.matchesFilters(msg.data, connection.filters)) {
@@ -210,7 +206,7 @@ export class FeedWebSocketServer {
     }
   }
 
-  private async getMissedMessages(channels: string[], lastSequence: bigint) {
+  private async getMissedMessages(channels: string[], lastSequence: number) {
     const { prisma } = await import('../db');
     return await prisma.feedMessage.findMany({
       where: {

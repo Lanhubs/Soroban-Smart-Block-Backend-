@@ -5,7 +5,6 @@
  * rotations, version lineage, and upgrade authorization events.
  */
 import { Router, Request, Response } from 'express';
-import { z } from 'zod';
 
 export const upgradeTraceRouter = Router();
 

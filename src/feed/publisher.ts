@@ -9,7 +9,7 @@ export interface FeedMessage {
 }
 
 class FeedPublisher extends EventEmitter {
-  private sequenceCounter = BigInt(0);
+  private sequenceCounter = 0;
 
   async publish(message: FeedMessage) {
     try {
@@ -42,7 +42,7 @@ class FeedPublisher extends EventEmitter {
     }
   }
 
-  async getLastSequence(): Promise<bigint> {
+  async getLastSequence(): Promise<number> {
     const lastMessage = await prisma.feedMessage.findFirst({
       orderBy: { sequence: 'desc' },
       select: { sequence: true },
@@ -53,7 +53,7 @@ class FeedPublisher extends EventEmitter {
       return lastMessage.sequence;
     }
 
-    return BigInt(0);
+    return 0;
   }
 
   async initializeSequence() {

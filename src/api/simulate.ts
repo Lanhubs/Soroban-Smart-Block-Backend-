@@ -11,6 +11,7 @@ import { parseCallTrace } from '../indexer/call-trace';
 import { classifyStorageEntries } from '../indexer/storage-classifier';
 import { trackTtlChanges } from '../indexer/ttl-tracker';
 import { prismaRead as prisma } from '../db';
+import { asyncHandler } from '../middleware/asyncHandler';
 
 export const simulateRouter = Router();
 
@@ -243,53 +244,5 @@ simulateRouter.post(
         humanSummary,
       },
     });
-  }
-
-  // ── Failure — diagnostic overlay ──────────────────────────────────────────
-  const rpcError = (rpcResult as SorobanRpc.Api.SimulateTransactionErrorResponse).error;
-  const callTrace = parseCallTrace(
-    (rpcResult as SorobanRpc.Api.SimulateTransactionErrorResponse).events as xdr.DiagnosticEvent[],
-  );
-
-  let paramIssues: ParamDiagnostic[] = [];
-  let humanSummary = rpcError;
-
-  if (parsed) {
-    const { contractId, functionName } = parsed;
-    let rawArgs: xdr.ScVal[] = [];
-    try {
-      const envelope = xdr.TransactionEnvelope.fromXDR(transaction, 'base64');
-      const ops = envelope.switch().name === 'envelopeTypeTx'
-        ? envelope.v1().tx().operations() : envelope.v0().tx().operations();
-      const invokeOp = ops.find((op) => op.body().switch().name === 'invokeHostFunction');
-      if (invokeOp)
-        rawArgs = invokeOp.body().invokeHostFunctionOp().hostFunction().invokeContract().args();
-    } catch { /* leave empty */ }
-
-    const [abi, contract] = await Promise.all([
-      getContractAbi(contractId),
-      prisma.contract.findUnique({ where: { address: contractId } }),
-    ]);
-
-    paramIssues = diagnoseArgs(functionName, rawArgs, abi, contract?.tokenDecimals ?? undefined);
-    humanSummary = paramIssues.length > 0
-      ? `Call to "${functionName}" on ${contract?.name ?? contractId} will fail:\n` +
-        paramIssues.map((p) => `  • [arg ${p.index}] ${p.name}: ${p.issue}`).join('\n')
-      : abi
-        ? `Simulation failed for "${functionName}" on ${contract?.name ?? contractId}. ` +
-          `Arguments look structurally valid — likely a contract assertion or missing auth. RPC: ${rpcError}`
-        : rpcError;
-  }
-
-  return res.status(422).json({
-    status: 'failed',
-    callTrace,
-    diagnostics: {
-      rpcError,
-      contract: parsed?.contractId ?? null,
-      function: parsed?.functionName ?? null,
-      paramIssues,
-      humanSummary,
-    },
-  });
-});
+  }),
+);

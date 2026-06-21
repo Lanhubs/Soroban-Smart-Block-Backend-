@@ -1,5 +1,4 @@
-import { xdr, scValToNative, Address, StrKey } from '@stellar/stellar-sdk';
-import { translateAddress } from './strkey-translator';
+import { xdr, scValToNative, StrKey } from '@stellar/stellar-sdk';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

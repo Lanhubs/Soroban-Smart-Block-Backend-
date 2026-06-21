@@ -15,23 +15,10 @@ import {
   normalizeCredential,
   saveReputationToDb,
   verifyIdentityLinks,
-  verifySignedMessage,
 } from '../reputation/score';
-import {
-  buildTrustGraph,
-  findTrustPath,
-  weightEndorsement,
-  weightedEndorsements,
-} from '../reputation/trustGraph';
-import {
-  calculateDelegatedVotingPower,
-  calculateQuadraticVotingPower,
-} from '../reputation/governance';
-import {
-  castArbitrationVote,
-  createArbitrationCase,
-  resolveArbitrationCase,
-} from '../reputation/arbitration';
+import { buildTrustGraph, findTrustPath, weightedEndorsements } from '../reputation/trustGraph';
+import { calculateDelegatedVotingPower } from '../reputation/governance';
+import { createArbitrationCase, resolveArbitrationCase } from '../reputation/arbitration';
 import { ChainReputationData, EndorsementInput, LinkedIdentityInput } from '../reputation/types';
 
 export const reputationRouter = Router();

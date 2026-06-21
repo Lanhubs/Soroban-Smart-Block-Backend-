@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
-import { prismaRead, prismaWrite } from '../db';
+import { prismaRead } from '../db';
 import { z } from 'zod';
 
 export const benchmarkRouter = Router();

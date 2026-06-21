@@ -1,4 +1,3 @@
-import { xdr } from '@stellar/stellar-sdk';
 import { prismaWrite as prisma } from '../db';
 
 /**

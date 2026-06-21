@@ -17,7 +17,6 @@ import {
   Account,
   Networks,
   Operation,
-  Asset,
 } from '@stellar/stellar-sdk';
 
 // ── Mock dependencies that require a live DB ─────────────────────────────────

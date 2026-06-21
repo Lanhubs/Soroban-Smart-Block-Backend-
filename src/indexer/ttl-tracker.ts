@@ -1,4 +1,4 @@
-import { xdr, StrKey } from '@stellar/stellar-sdk';
+import { xdr } from '@stellar/stellar-sdk';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 

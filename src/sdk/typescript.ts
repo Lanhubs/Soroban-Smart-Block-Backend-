@@ -190,7 +190,7 @@ export class SorobanSubscription {
 export class SorobanWebSocket {
   constructor(private ws: WebSocket) {}
 
-  on(event: 'message' | 'error' | 'open' | 'close', callback: Function) {
+  on(event: 'message' | 'error' | 'open' | 'close', callback: (...args: any[]) => void) {
     switch (event) {
       case 'message':
         this.ws.onmessage = (e) => {
@@ -249,7 +249,7 @@ export class SorobanWebSocket {
 export class SorobanSSE {
   constructor(private eventSource: EventSource) {}
 
-  on(event: 'message' | 'connected' | 'error' | 'heartbeat', callback: Function) {
+  on(event: 'message' | 'connected' | 'error' | 'heartbeat', callback: (data: any) => void) {
     this.eventSource.addEventListener(event, (e) => {
       try {
         const data = JSON.parse((e as MessageEvent).data);

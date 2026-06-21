@@ -1,0 +1,455 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Ledger {
+  sequence     Int      @id
+  hash         String   @unique
+  closeTime    DateTime
+  txCount      Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  transactions Transaction[]
+  events       Event[]
+
+  @@index([sequence])
+  @@index([closeTime])
+}
+
+model Contract {
+  id                 String   @id @default(cuid())
+  address            String   @unique
+  name               String?
+  description        String?
+  abi                Json?
+  functionSignatures Json?
+  isToken            Boolean  @default(false)
+  tokenSymbol        String?
+  tokenName          String?
+  tokenDecimals      Int?
+  wasmHash           String?
+  isVerified         Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  transactions Transaction[]
+  events       Event[]
+  wasmUpgrades WasmUpgradeHistory[]
+
+  @@index([address])
+}
+
+model WasmUpgradeHistory {
+  id              String   @id @default(cuid())
+  contractAddress String
+  previousHash    String?
+  newHash         String
+  ledgerSequence  Int
+  ledgerCloseTime DateTime
+  transactionHash String?
+  createdAt       DateTime @default(now())
+
+  // ── Phase 1: upgrade provenance ──────────────────────────────────────────
+  upgrader                  String?  // account that authorised the upgrade
+  upgraderAccountAgeLedgers Int?     // age (in ledgers) of the upgrader account at upgrade time
+
+  // ── Phase 3: WASM diff classification ────────────────────────────────────
+  changeClassification String?  // "minor" | "moderate" | "major" | "critical"
+  changeSummary        String?  // natural-language description of the change
+  diffStats            Json?    // { opcodeChurn, addedOpcodes, removedOpcodes, addedFunctions, removedFunctions, ... }
+  criticalFnChanges    String[] // critical functions added/removed/changed by this upgrade
+
+  // ── Phase 2: governance analysis ─────────────────────────────────────────
+  governanceType       String?  // "single_key" | "multisig" | "timelock" | "dao" | "unknown"
+  signerCount          Int?     // number of signers on the upgrader authority
+  threshold            Int?     // signature weight / threshold required
+  timelockSeconds      Int?     // enforced delay before the upgrade could execute, if any
+  daoProposalId        String?  // correlated governance proposal id, if any
+  decentralizationScore Int?    // 0-100 decentralisation methodology score
+
+  // ── Phase 4: suspicious activity ─────────────────────────────────────────
+  suspiciousFlags String[] // machine-readable flags e.g. "post_vuln_upgrade", "new_account_upgrader"
+  isSuspicious    Boolean  @default(false)
+  riskLevel       String?  // "none" | "low" | "medium" | "high" | "critical"
+
+  contract Contract @relation(fields: [contractAddress], references: [address])
+
+  @@index([contractAddress, ledgerSequence])
+  @@index([ledgerSequence])
+  @@index([isSuspicious])
+  @@index([changeClassification])
+}
+
+model Transaction {
+  id               String   @id @default(cuid())
+  hash             String   @unique
+  ledgerSequence   Int
+  ledgerCloseTime  DateTime
+  sourceAccount    String
+  contractAddress  String?
+  functionName     String?
+  functionArgs     Json?
+  rawXdr           String
+  status           String
+  humanReadable    String?
+  feeCharged       String?
+  sorobanResources Json?
+  failureReason    String?
+  createdAt        DateTime @default(now())
+
+  ledger   Ledger    @relation(fields: [ledgerSequence], references: [sequence])
+  contract Contract? @relation(fields: [contractAddress], references: [address])
+  events   Event[]
+
+  @@index([hash])
+  @@index([ledgerSequence])
+  @@index([sourceAccount])
+  @@index([contractAddress])
+  @@index([status])
+  @@index([contractAddress, ledgerSequence, id])
+  @@index([sourceAccount, ledgerSequence, id])
+  @@index([status, ledgerSequence, id])
+  @@index([ledgerSequence, id])
+}
+
+model Event {
+  id              String   @id @default(cuid())
+  transactionHash String
+  contractAddress String
+  eventType       String
+  topicSymbol     String?
+  topics          Json
+  data            Json
+  decoded         Json?
+  ledgerSequence  Int
+  ledgerCloseTime DateTime
+  createdAt       DateTime @default(now())
+
+  ledger      Ledger      @relation(fields: [ledgerSequence], references: [sequence])
+  transaction Transaction @relation(fields: [transactionHash], references: [hash])
+  contract    Contract    @relation(fields: [contractAddress], references: [address])
+
+  @@index([transactionHash])
+  @@index([contractAddress])
+  @@index([eventType])
+  @@index([topicSymbol])
+  @@index([ledgerSequence])
+  @@index([contractAddress, topicSymbol])
+  @@index([contractAddress, ledgerSequence, id])
+  @@index([contractAddress, eventType, ledgerSequence])
+}
+
+model EventDefinition {
+  id              String   @id @default(cuid())
+  contractAddress String
+  topicSymbol     String
+  humanTemplate   String
+  submittedBy     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([contractAddress, topicSymbol])
+  @@index([contractAddress])
+}
+
+model SessionAuthorization {
+  id                String   @id @default(cuid())
+  eventId           String   @unique
+  contractAddress   String
+  hotSigner         String?
+  authorizationType String
+  startLedger       Int
+  expiryLedger      Int
+  allocatedBlocks   Int
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([contractAddress])
+  @@index([expiryLedger])
+}
+
+model IndexerState {
+  id         String   @id @default("singleton")
+  lastLedger Int      @default(0)
+  updatedAt  DateTime @updatedAt
+}
+
+model SacMapping {
+  id           String   @id @default(cuid())
+  assetCode    String
+  assetIssuer  String?
+  assetType    String
+  sacAddress   String   @unique
+  firstSeenLedger Int?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([assetCode, assetIssuer])
+  @@index([sacAddress])
+  @@index([assetCode])
+}
+
+model SacTrustlineMapping {
+  id                  String   @id @default(cuid())
+  gAccount            String
+  sacAddress          String
+  assetCode           String
+  assetIssuer         String?
+  assetType           String   @default("credit_alphanum4")
+  trustlineLimit      String   @default("0")
+  isUnlimited         Boolean  @default(false)
+  status              String   @default("active")
+  transactionHash     String
+  ledgerSequence      Int
+  ledgerCloseTime     DateTime
+  changeTrustOpLedger Int?
+  changeTrustOpTxHash String?
+  origin              String   @default("soroban")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([gAccount, sacAddress])
+  @@index([gAccount])
+  @@index([sacAddress])
+  @@index([assetCode])
+  @@index([status])
+  @@index([ledgerSequence])
+  @@index([changeTrustOpLedger])
+}
+
+model VerificationJob {
+  id              String   @id @default(cuid())
+  contractAddress String?
+  toolchain       String   @default("soroban-cli@0.9.4")
+  status          String   @default("pending")
+  uploadedHash    String?
+  onChainWasmHash String?
+  compiledWasmHash String?
+  matched         Boolean?
+  errorMsg        String?
+  logs            String?
+  sourceFiles     Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([contractAddress])
+  @@index([status])
+}
+
+model ContractState {
+  id                 String   @id @default(cuid())
+  contractAddress    String
+  ledgerKey          String
+  keyType            String
+  status             String   @default("Live")
+  liveUntilLedgerSeq Int?
+  lastSeenLedger     Int
+  restoredAtLedger   Int?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([contractAddress, ledgerKey])
+  @@index([contractAddress])
+  @@index([status])
+  @@index([liveUntilLedgerSeq])
+}
+
+model RestorationLog {
+  id              String   @id @default(cuid())
+  transactionHash String   @unique
+  sourceAccount   String
+  ledgerSequence  Int
+  ledgerCloseTime DateTime
+  feeCharged      String?
+  restoredKeys    Json
+  createdAt       DateTime @default(now())
+
+  @@index([sourceAccount])
+  @@index([ledgerSequence])
+}
+
+model FailedItem {
+  id          String   @id @default(cuid())
+  itemType    String
+  itemId      String
+  ledger      Int
+  rawXdr      String?
+  errorMsg    String
+  errorStack  String?
+  context     Json?
+  retryCount  Int      @default(0)
+  dead        Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  lastTriedAt DateTime @default(now())
+
+  @@index([itemType, dead])
+  @@index([ledger])
+}
+
+model ApiKey {
+  id         String   @id @default(cuid())
+  key        String   @unique
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime?
+}
+
+// ---------------------------------------------------------------------------
+// Account Abstraction
+// ---------------------------------------------------------------------------
+
+model SmartWallet {
+  id                String   @id @default(cuid())
+  address           String   @unique
+  walletType        String   // multi_sig | social_recovery | session_key | sponsored | passkey | hybrid | custom
+  signerCount       Int?
+  threshold         Int?
+  guardians         Json?    // array of guardian addresses
+  sessionKeys       Json?    // array of active session key descriptors
+  authMethods       Json?    // detected auth methods from WASM/call analysis
+  deployedAtLedger  Int?
+  deployedByAccount String?
+  wasmHash          String?
+  firstSeenLedger   Int
+  lastSeenLedger    Int
+  txCount           Int      @default(0)
+  sponsoredTxCount  Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  sponsorships SponsoredTransaction[]
+
+  @@index([walletType])
+  @@index([firstSeenLedger])
+  @@index([deployedByAccount])
+}
+
+model SponsoredTransaction {
+  id              String   @id @default(cuid())
+  transactionHash String   @unique
+  sponsorAccount  String   // fee payer (G-address or contract)
+  sourceAccount   String   // logical sender
+  walletAddress   String?  // smart wallet address if source is a contract
+  feeCharged      String?
+  ledgerSequence  Int
+  ledgerCloseTime DateTime
+  createdAt       DateTime @default(now())
+
+  wallet SmartWallet? @relation(fields: [walletAddress], references: [address])
+
+  @@index([sponsorAccount])
+  @@index([sourceAccount])
+  @@index([walletAddress])
+  @@index([ledgerSequence])
+}
+
+model AuthDecomposition {
+  id              String   @id @default(cuid())
+  transactionHash String   @unique
+  walletAddress   String?
+  authTree        Json     // full ParsedAuth tree
+  authMethods     Json     // detected method names: ['multi_sig','passkey',...]
+  signerCount     Int      @default(0)
+  hasSubCalls     Boolean  @default(false)
+  humanReadable   String?  // plain-English description of who authorized what
+  ledgerSequence  Int
+  createdAt       DateTime @default(now())
+
+  @@index([walletAddress])
+  @@index([ledgerSequence])
+  @@index([ledgerSequence, id])
+}
+
+model ContractResourceMetric {
+  id               String   @id @default(cuid())
+  contractAddress  String
+  transactionHash  String
+  ledgerSequence   Int
+  ledgerCloseTime  DateTime
+  memoryUsageBytes Int
+  cpuInstructions  Int
+  storageFootprint Int
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([contractAddress, transactionHash])
+  @@index([contractAddress])
+  @@index([ledgerSequence])
+}
+
+model TranslationKey {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  defaultText String
+  context     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  translations Translation[]
+
+  @@index([key])
+}
+
+model Translation {
+  id             String   @id @default(cuid())
+  keyId          String
+  language       String
+  translatedText String
+  approvedBy     String?
+  approvedAt     DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  key TranslationKey @relation(fields: [keyId], references: [id])
+
+  @@unique([keyId, language])
+  @@index([language])
+}
+
+model FeedChannel {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  category    String?
+  schema        Json?
+  retentionDays Int?
+  enabled       Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model FeedMessage {
+  id            String    @id @default(cuid())
+  channelName   String
+  data          Json
+  sequence      Int       @default(0)
+  indexedAt     DateTime?
+  ledgerSequence Int?
+  timestamp     DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+
+  @@index([channelName])
+  @@index([ledgerSequence])
+}
+
+model FeedSubscription {
+  id             String   @id @default(cuid())
+  channelName    String
+  deliveryType   String
+  deliveryConfig Json?
+  userId         String?
+  filters        Json?
+  batchSize      Int?
+  maxRatePerSecond Int?
+  status         String   @default("active")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([channelName])
+  @@index([status])
+}

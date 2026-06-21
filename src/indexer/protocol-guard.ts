@@ -6,7 +6,6 @@
  * don't crash the mainnet ingestion service.
  */
 import { rpc } from './rpc';
-import { config } from '../config';
 
 // ── Protocol version registry ────────────────────────────────────────────────
 

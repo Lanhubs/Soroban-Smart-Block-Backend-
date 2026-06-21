@@ -6,7 +6,6 @@
  * hierarchies, and lineage analysis.
  */
 import { Router, Request, Response } from 'express';
-import { z } from 'zod';
 
 export const factoryTrackerRouter = Router();
 

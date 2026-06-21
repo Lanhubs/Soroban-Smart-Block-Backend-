@@ -3,7 +3,7 @@ import { freezeRouter } from '../../src/api/freeze';
 import express from 'express';
 import request from 'supertest';
 import { prismaWrite as prisma } from '../../src/db';
-import { scanForFrozenKeys, recordFreezeViolation } from '../../src/indexer/freeze-scanner';
+import { recordFreezeViolation } from '../../src/indexer/freeze-scanner';
 
 // Mock DB
 vi.mock('../../src/db', () => ({
@@ -33,8 +33,8 @@ vi.mock('../../src/db', () => ({
     },
     transaction: {
       updateMany: vi.fn(),
-    }
-  }
+    },
+  },
 }));
 
 const app = express();
@@ -51,8 +51,8 @@ describe('Freeze Management API & Scanner', () => {
       await recordFreezeViolation('hash1', 'contract', 100, new Date(), ['key1', 'key2', 'key3']);
       expect(prisma.freezeViolation.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
-          update: expect.objectContaining({ severity: 'medium' })
-        })
+          update: expect.objectContaining({ severity: 'medium' }),
+        }),
       );
     });
 
@@ -61,13 +61,13 @@ describe('Freeze Management API & Scanner', () => {
       const mockFetch = vi.fn().mockResolvedValue({});
       global.fetch = mockFetch as any;
       process.env.FREEZE_ALERT_WEBHOOK_URL = 'http://alert.url';
-      
+
       await recordFreezeViolation('hash_critical', 'contract', 100, new Date(), keys);
-      
+
       expect(prisma.freezeViolation.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
-          update: expect.objectContaining({ severity: 'critical' })
-        })
+          update: expect.objectContaining({ severity: 'critical' }),
+        }),
       );
       expect(mockFetch).toHaveBeenCalled();
     });
@@ -86,36 +86,39 @@ describe('Freeze Management API & Scanner', () => {
     it('POST /api/v1/freeze/keys creates a key and logs audit', async () => {
       const newKey = { id: 'k1', ledgerKey: 'keyX' };
       (prisma.frozenLedgerKey.create as any).mockResolvedValue(newKey);
-      
+
       const res = await request(app)
         .post('/api/v1/freeze/keys')
         .set('x-admin-token', 'admin1')
         .send({ ledgerKey: 'keyX', reason: 'sus' });
-        
+
       expect(res.status).toBe(201);
       expect(prisma.frozenLedgerKey.create).toHaveBeenCalled();
       expect(prisma.auditLog.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ action: 'CREATE_FREEZE' })
-        })
+          data: expect.objectContaining({ action: 'CREATE_FREEZE' }),
+        }),
       );
     });
 
     it('PATCH /api/v1/freeze/violations/:id resolves violation', async () => {
       (prisma.freezeViolation.findUnique as any).mockResolvedValue({ id: 'v1' });
-      (prisma.freezeViolation.update as any).mockResolvedValue({ id: 'v1', resolution: 'resolved' });
+      (prisma.freezeViolation.update as any).mockResolvedValue({
+        id: 'v1',
+        resolution: 'resolved',
+      });
 
       const res = await request(app)
         .patch('/api/v1/freeze/violations/v1')
         .set('x-admin-token', 'admin1')
         .send({ resolution: 'resolved' });
-        
+
       expect(res.status).toBe(200);
       expect(res.body.resolution).toBe('resolved');
       expect(prisma.auditLog.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ action: 'RESOLVE_VIOLATION' })
-        })
+          data: expect.objectContaining({ action: 'RESOLVE_VIOLATION' }),
+        }),
       );
     });
   });

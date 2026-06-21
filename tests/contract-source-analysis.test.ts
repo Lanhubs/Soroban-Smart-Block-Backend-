@@ -1,5 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { prismaRead, prismaWrite } from '../src/db';
+import { describe, it, expect, vi } from 'vitest';
 import { analyzeWasmContract } from '../src/indexer/wasm-decompiler';
 
 describe('Contract Source Analysis — Integration Tests', () => {
@@ -144,7 +143,9 @@ describe('Contract Source Analysis — Integration Tests', () => {
   describe('Performance — Batch decompilation', () => {
     it('can process 100 Wasm binaries', () => {
       const startTime = Date.now();
-      const wasmBinaries = Array(100).fill(null).map(() => makeWasm([0x01, 0x01]));
+      const wasmBinaries = Array(100)
+        .fill(null)
+        .map(() => makeWasm([0x01, 0x01]));
       const results = wasmBinaries.map((wasm) => analyzeWasmContract(wasm));
       const elapsed = Date.now() - startTime;
 

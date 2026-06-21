@@ -1,9 +1,8 @@
 import { config } from './config';
+import type { RedisClientType } from 'redis';
 
 const CACHE_URL = config.cacheUrl ?? 'memory://';
 const USE_REDIS = CACHE_URL !== '' && !CACHE_URL.startsWith('memory://');
-
-type RedisClientType = any;
 
 interface MemoryEntry {
   payload: string;

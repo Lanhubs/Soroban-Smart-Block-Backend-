@@ -8,7 +8,6 @@ import { z } from 'zod';
 import { prismaRead, prismaWrite } from '../db';
 import { cacheGet, cacheSet } from '../cache';
 import {
-  detectDirectArbitrage,
   buildPriceGraph,
   detectNegativeCycles,
   simulateExecution,

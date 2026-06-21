@@ -4,7 +4,7 @@
  * Converts raw DiagnosticEvents + simulation metadata into structured steps
  * that mirror Ethereum's debug_traceTransaction output.
  */
-import { xdr, SorobanRpc, scValToNative, StrKey } from '@stellar/stellar-sdk';
+import { xdr, SorobanRpc, StrKey } from '@stellar/stellar-sdk';
 import { scValToJson } from './xdr-parser';
 
 // ── Types ─────────────────────────────────────────────────────────────────────

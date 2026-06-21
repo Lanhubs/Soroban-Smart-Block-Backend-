@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import express, { Request, Response, NextFunction } from 'express';
 import request from 'supertest';
 import { asyncHandler } from '../src/middleware/asyncHandler';
@@ -12,7 +12,7 @@ describe('Error Handling Integration', () => {
       '/api/test-error',
       asyncHandler(async (_req: Request, _res: Response) => {
         throw new Error('Database connection failed');
-      })
+      }),
     );
 
     // Global error handler mock
@@ -33,7 +33,7 @@ describe('Error Handling Integration', () => {
       '/api/test-success',
       asyncHandler(async (_req: Request, res: Response) => {
         res.status(200).json({ status: 'ok' });
-      })
+      }),
     );
 
     const response = await request(app).get('/api/test-success');

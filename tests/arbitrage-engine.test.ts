@@ -69,7 +69,6 @@ vi.mock('../src/cache', () => ({
 import {
   computeMevScore,
   detectNegativeCycles,
-  buildPriceGraph,
   detectDirectArbitrage,
 } from '../src/indexer/arbitrage-engine';
 import { prismaRead } from '../src/db';
@@ -114,33 +113,77 @@ describe('computeMevScore', () => {
   });
 
   it('speedRequirement is immediate for 1-hop', () => {
-    const score = computeMevScore({ profitPercentage: 1, capitalRequired: 1000, hops: 1, liquidityBuyPool: 100000, liquiditySellPool: 100000 });
+    const score = computeMevScore({
+      profitPercentage: 1,
+      capitalRequired: 1000,
+      hops: 1,
+      liquidityBuyPool: 100000,
+      liquiditySellPool: 100000,
+    });
     expect(score.speedRequirement).toBe('immediate');
   });
 
   it('speedRequirement is fast for 2-hop', () => {
-    const score = computeMevScore({ profitPercentage: 1, capitalRequired: 1000, hops: 2, liquidityBuyPool: 100000, liquiditySellPool: 100000 });
+    const score = computeMevScore({
+      profitPercentage: 1,
+      capitalRequired: 1000,
+      hops: 2,
+      liquidityBuyPool: 100000,
+      liquiditySellPool: 100000,
+    });
     expect(score.speedRequirement).toBe('fast');
   });
 
   it('competitionLevel is low when few bots competing', () => {
-    const score = computeMevScore({ profitPercentage: 1, capitalRequired: 1000, hops: 1, liquidityBuyPool: 100000, liquiditySellPool: 100000, competingBotCount: 1 });
+    const score = computeMevScore({
+      profitPercentage: 1,
+      capitalRequired: 1000,
+      hops: 1,
+      liquidityBuyPool: 100000,
+      liquiditySellPool: 100000,
+      competingBotCount: 1,
+    });
     expect(score.competitionLevel).toBe('low');
   });
 
   it('competitionLevel is extreme when many bots competing', () => {
-    const score = computeMevScore({ profitPercentage: 1, capitalRequired: 1000, hops: 1, liquidityBuyPool: 100000, liquiditySellPool: 100000, competingBotCount: 15 });
+    const score = computeMevScore({
+      profitPercentage: 1,
+      capitalRequired: 1000,
+      hops: 1,
+      liquidityBuyPool: 100000,
+      liquiditySellPool: 100000,
+      competingBotCount: 15,
+    });
     expect(score.competitionLevel).toBe('extreme');
   });
 
   it('slippageRisk is high when capital >> liquidity', () => {
-    const score = computeMevScore({ profitPercentage: 1, capitalRequired: 1_000_000, hops: 1, liquidityBuyPool: 5000, liquiditySellPool: 5000 });
+    const score = computeMevScore({
+      profitPercentage: 1,
+      capitalRequired: 1_000_000,
+      hops: 1,
+      liquidityBuyPool: 5000,
+      liquiditySellPool: 5000,
+    });
     expect(score.slippageRisk).toBeGreaterThan(0.5);
   });
 
   it('capitalEfficiency is proportional to profit %', () => {
-    const low = computeMevScore({ profitPercentage: 0.1, capitalRequired: 10000, hops: 1, liquidityBuyPool: 1e6, liquiditySellPool: 1e6 });
-    const high = computeMevScore({ profitPercentage: 2.0, capitalRequired: 10000, hops: 1, liquidityBuyPool: 1e6, liquiditySellPool: 1e6 });
+    const low = computeMevScore({
+      profitPercentage: 0.1,
+      capitalRequired: 10000,
+      hops: 1,
+      liquidityBuyPool: 1e6,
+      liquiditySellPool: 1e6,
+    });
+    const high = computeMevScore({
+      profitPercentage: 2.0,
+      capitalRequired: 10000,
+      hops: 1,
+      liquidityBuyPool: 1e6,
+      liquiditySellPool: 1e6,
+    });
     expect(high.capitalEfficiency).toBeGreaterThan(low.capitalEfficiency);
   });
 });
@@ -148,8 +191,21 @@ describe('computeMevScore', () => {
 // ─── detectNegativeCycles (Bellman-Ford) ──────────────────────────────────────
 
 describe('detectNegativeCycles', () => {
-  function buildTestGraph(prices: { from: string; to: string; price: number; poolId: string; fee: number }[]) {
-    const nodes = new Map<string, { poolId: string; dexName: string; tokenA: string; tokenB: string; spotPrice: number; feeTier: number; liquidity: number }[]>();
+  function buildTestGraph(
+    prices: { from: string; to: string; price: number; poolId: string; fee: number }[],
+  ) {
+    const nodes = new Map<
+      string,
+      {
+        poolId: string;
+        dexName: string;
+        tokenA: string;
+        tokenB: string;
+        spotPrice: number;
+        feeTier: number;
+        liquidity: number;
+      }[]
+    >();
     const edges = new Map<string, number>();
 
     for (const p of prices) {
@@ -194,9 +250,9 @@ describe('detectNegativeCycles', () => {
   it('ranks cycles by profitability (highest first)', () => {
     const graph = buildTestGraph([
       { from: 'A', to: 'B', price: 1.05, poolId: 'p1', fee: 0 },
-      { from: 'B', to: 'A', price: 1.0,  poolId: 'p2', fee: 0 },
+      { from: 'B', to: 'A', price: 1.0, poolId: 'p2', fee: 0 },
       { from: 'A', to: 'C', price: 1.02, poolId: 'p3', fee: 0 },
-      { from: 'C', to: 'A', price: 1.0,  poolId: 'p4', fee: 0 },
+      { from: 'C', to: 'A', price: 1.0, poolId: 'p4', fee: 0 },
     ]);
     const cycles = detectNegativeCycles(graph, 5);
     if (cycles.length >= 2) {
@@ -308,31 +364,31 @@ describe('Price deviation threshold detection', () => {
   const THRESHOLDS = [0.1, 0.5, 1.0, 2.0];
 
   function computeDeviation(priceA: number, priceB: number): number {
-    return Math.abs(priceA - priceB) / Math.min(priceA, priceB) * 100;
+    return (Math.abs(priceA - priceB) / Math.min(priceA, priceB)) * 100;
   }
 
   it('flags 0.1% deviation threshold correctly', () => {
-    const dev = computeDeviation(1.0000, 1.0011);
+    const dev = computeDeviation(1.0, 1.0011);
     expect(dev).toBeGreaterThanOrEqual(THRESHOLDS[0]);
   });
 
   it('flags 0.5% deviation threshold correctly', () => {
-    const dev = computeDeviation(1.0000, 1.0051);
+    const dev = computeDeviation(1.0, 1.0051);
     expect(dev).toBeGreaterThanOrEqual(THRESHOLDS[1]);
   });
 
   it('flags 1% deviation threshold correctly', () => {
-    const dev = computeDeviation(1.0000, 1.0101);
+    const dev = computeDeviation(1.0, 1.0101);
     expect(dev).toBeGreaterThanOrEqual(THRESHOLDS[2]);
   });
 
   it('flags 2% deviation threshold correctly', () => {
-    const dev = computeDeviation(1.0000, 1.0201);
+    const dev = computeDeviation(1.0, 1.0201);
     expect(dev).toBeGreaterThanOrEqual(THRESHOLDS[3]);
   });
 
   it('does NOT flag deviation below 0.1%', () => {
-    const dev = computeDeviation(1.0000, 1.0005);
+    const dev = computeDeviation(1.0, 1.0005);
     expect(dev).toBeLessThan(THRESHOLDS[0]);
   });
 
@@ -347,24 +403,49 @@ describe('Price deviation threshold detection', () => {
 
 describe('computeMevScore edge cases', () => {
   it('handles zero capital gracefully', () => {
-    const score = computeMevScore({ profitPercentage: 1, capitalRequired: 0, hops: 1, liquidityBuyPool: 100000, liquiditySellPool: 100000 });
+    const score = computeMevScore({
+      profitPercentage: 1,
+      capitalRequired: 0,
+      hops: 1,
+      liquidityBuyPool: 100000,
+      liquiditySellPool: 100000,
+    });
     expect(score.capitalEfficiency).toBe(0);
     expect(score.overallScore).toBeGreaterThanOrEqual(0);
   });
 
   it('handles zero liquidity gracefully', () => {
-    const score = computeMevScore({ profitPercentage: 1, capitalRequired: 1000, hops: 1, liquidityBuyPool: 0, liquiditySellPool: 0 });
+    const score = computeMevScore({
+      profitPercentage: 1,
+      capitalRequired: 1000,
+      hops: 1,
+      liquidityBuyPool: 0,
+      liquiditySellPool: 0,
+    });
     expect(score.slippageRisk).toBe(0.5);
   });
 
   it('never produces NaN or Infinity', () => {
-    const score = computeMevScore({ profitPercentage: 0, capitalRequired: 0, hops: 0, liquidityBuyPool: 0, liquiditySellPool: 0 });
+    const score = computeMevScore({
+      profitPercentage: 0,
+      capitalRequired: 0,
+      hops: 0,
+      liquidityBuyPool: 0,
+      liquiditySellPool: 0,
+    });
     expect(Number.isFinite(score.overallScore)).toBe(true);
     expect(Number.isNaN(score.overallScore)).toBe(false);
   });
 
   it('very high profit always recommends execute_immediately', () => {
-    const score = computeMevScore({ profitPercentage: 50, capitalRequired: 1000, hops: 1, liquidityBuyPool: 1e9, liquiditySellPool: 1e9, competingBotCount: 0 });
+    const score = computeMevScore({
+      profitPercentage: 50,
+      capitalRequired: 1000,
+      hops: 1,
+      liquidityBuyPool: 1e9,
+      liquiditySellPool: 1e9,
+      competingBotCount: 0,
+    });
     expect(score.recommendation).toBe('execute_immediately');
   });
 });
@@ -377,7 +458,7 @@ describe('Route optimization', () => {
     const sellPrice = 0.1245;
     const feeBuy = 0.003;
     const feeSell = 0.003;
-    const gross = (sellPrice - buyPrice) / buyPrice * 100;
+    const gross = ((sellPrice - buyPrice) / buyPrice) * 100;
     const fees = (feeBuy + feeSell) * 100;
     const net = gross - fees;
     // Net should be positive (approx 0.29%)

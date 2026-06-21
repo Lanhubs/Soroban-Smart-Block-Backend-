@@ -1,6 +1,6 @@
 import { xdr, scValToNative } from '@stellar/stellar-sdk';
 import { prismaWrite as prisma } from '../db';
-import { fetchEvents, type LedgerEvent } from './rpc';
+import { fetchEvents } from './rpc';
 
 /**
  * #320: Yield Farming & Staking Optimizer

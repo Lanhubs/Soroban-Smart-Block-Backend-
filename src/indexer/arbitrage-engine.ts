@@ -190,15 +190,15 @@ export function detectNegativeCycles(graph: PriceGraph, maxHops = 5): ArbitrageC
       const df = dist.get(from) ?? Infinity;
       const dt = dist.get(to) ?? Infinity;
       if (df + weight < dt && to === startToken && df !== Infinity) {
-        // Reconstruct cycle path
-        const path: string[] = [startToken];
+        // Reconstruct cycle path in forward order
+        const reverseNodes: string[] = [];
         const poolIds: string[] = [];
         const dexNames: string[] = [];
 
         let cur = from;
         let safetyNet = 0;
         while (cur !== startToken && safetyNet < maxHops) {
-          path.unshift(cur);
+          reverseNodes.push(cur);
           const p = prev.get(cur);
           if (!p) break;
           poolIds.unshift(p.poolId);
@@ -206,6 +206,7 @@ export function detectNegativeCycles(graph: PriceGraph, maxHops = 5): ArbitrageC
           cur = p.token;
           safetyNet++;
         }
+        const path = [startToken, ...reverseNodes.reverse()];
         poolIds.push(poolId);
         const node = Array.from(graph.nodes.get(from) ?? []).find((n) => n.poolId === poolId);
         dexNames.push(node?.dexName ?? '');

@@ -1,5 +1,4 @@
 import { prismaWrite as prisma } from '../db';
-import { logger } from '../logger';
 
 export async function analyzeQuorumIntersection(publicKeys: string[]): Promise<{
   canBlock: boolean;

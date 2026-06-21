@@ -13,8 +13,8 @@
  * Events     : transfer, mint, burn, approve, clawback, set_admin
  */
 
-import { xdr, scValToNative, Address } from '@stellar/stellar-sdk';
-import { decodeTypedArgs, formatAmount } from './args-decoder';
+import { xdr, scValToNative } from '@stellar/stellar-sdk';
+import { decodeTypedArgs } from './args-decoder';
 import type { AbiParam } from './registry';
 
 // ─── Canonical function signatures ───────────────────────────────────────────

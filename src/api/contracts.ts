@@ -3,6 +3,7 @@ import { prismaRead, prismaWrite } from '../db';
 import { z } from 'zod';
 import { abiRouter } from './abi';
 import { validateAddressParam, isValidStellarAddress } from '../middleware/sanitize';
+import { asyncHandler } from '../middleware/asyncHandler';
 
 /**
  * @swagger
@@ -168,26 +169,21 @@ contractRouter.get(
 contractRouter.get(
   '/:address/stats',
   validateAddressParam('address'),
-  async (req: Request, res: Response) => {
-    try {
-      const { since } = contractStatsQuerySchema.parse(req.query);
-      const stats = await getContractFunctionStats(
-        req.params.address,
-        since ? new Date(since) : undefined,
-      );
+  asyncHandler(async (req: Request, res: Response) => {
+    const { since } = contractStatsQuerySchema.parse(req.query);
+    const stats = await getContractFunctionStats(
+      req.params.address,
+      since ? new Date(since) : undefined,
+    );
 
-      if (stats === null) {
-        return res.status(404).json({ error: 'Contract not found' });
-      }
-
-      return res.json(stats);
-    } catch (e) {
-      return res.status(400).json({ error: String(e) });
+    if (stats === null) {
+      return res.status(404).json({ error: 'Contract not found' });
     }
-  },
+
+    return res.json(stats);
+  }),
 );
 
-<<<<<<< HEAD
 /**
  * @swagger
  * /api/v1/contracts/{address}:
@@ -239,17 +235,11 @@ contractRouter.get(
  *                 - $ref: '#/components/schemas/Error'
  *               example: { error: 'Contract not found' }
  */
-=======
->>>>>>> 8492f27 (fix: resolve all CI failures and clean up codebase)
 // GET /contracts/:address
 contractRouter.get(
   '/:address',
   validateAddressParam('address'),
-<<<<<<< HEAD
-  asyncHandler(async (req: Request, res: Response) => {
-=======
   async (req: Request, res: Response) => {
->>>>>>> 8492f27 (fix: resolve all CI failures and clean up codebase)
     const contract = await prismaRead.contract.findUnique({
       where: { address: req.params.address },
       include: {
@@ -267,11 +257,7 @@ contractRouter.get(
     });
     if (!contract) return res.status(404).json({ error: 'Contract not found' });
     res.json(contract);
-<<<<<<< HEAD
-  }),
-=======
   },
->>>>>>> 8492f27 (fix: resolve all CI failures and clean up codebase)
 );
 
 /**
@@ -313,8 +299,9 @@ contractRouter.get(
  *               example: { error: 'address is required' }
  */
 // POST /contracts — register ABI metadata
-contractRouter.post('/', async (req: Request, res: Response) => {
-  try {
+contractRouter.post(
+  '/',
+  asyncHandler(async (req: Request, res: Response) => {
     const data = abiSchema.parse(req.body);
     const contract = await prismaWrite.contract.upsert({
       where: { address: data.address },
@@ -327,7 +314,5 @@ contractRouter.post('/', async (req: Request, res: Response) => {
       },
     });
     res.status(201).json(contract);
-  } catch (e) {
-    res.status(400).json({ error: String(e) });
-  }
-});
+  }),
+);
