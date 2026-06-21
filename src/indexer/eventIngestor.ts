@@ -41,7 +41,10 @@ export function extractEventsFromMeta(metaXdr: string): Array<{
       // contractId() returns null | Buffer — encode as hex string
       const contractIdBuf: Buffer | null = ev.contractId();
       const contractId = contractIdBuf ? contractIdBuf.toString('hex') : '';
-      const topics = (ev.body() as any).v0().topics().map((t: xdr.ScVal) => t.toXDR('base64'));
+      const topics = (ev.body() as any)
+        .v0()
+        .topics()
+        .map((t: xdr.ScVal) => t.toXDR('base64'));
       const data: string = (ev.body() as any).v0().data().toXDR('base64');
       return { contractId, topics, data };
     });
@@ -72,7 +75,7 @@ export async function ingestEventsFromMeta(
   txHash: string,
   ledgerSequence: number,
   ledgerCloseTime: Date,
-  metaXdr: string
+  metaXdr: string,
 ): Promise<number> {
   const raw = extractEventsFromMeta(metaXdr);
   let stored = 0;

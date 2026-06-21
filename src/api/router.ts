@@ -1,4 +1,21 @@
+/**
+ * src/api/router.ts
+ *
+ * Central API router for the Soroban Block Explorer backend.
+ *
+ * All routers in src/api/ are registered here. A RouterRegistry CI check
+ * (scripts/validate-routes.ts) ensures every exported router is mounted —
+ * new routers added without a corresponding entry here will fail CI.
+ *
+ * Route prefix conventions:
+ *   - Kebab-case, matching the file name where possible
+ *   - No trailing slashes
+ *   - oracle-audit mounts under /oracles/audit (avoids root wildcard conflict)
+ */
+
 import { Router } from 'express';
+
+// ── Previously mounted routers ────────────────────────────────────────────────
 import { i18nRouter } from './i18n';
 import { transactionRouter } from './transactions';
 import { eventRouter } from './events';
@@ -17,6 +34,10 @@ import { aaRouter } from './aa';
 
 export const router = Router();
 
+// ── i18n ──────────────────────────────────────────────────────────────────────
+router.use('/i18n', i18nRouter);
+
+// ── Core Stellar / Soroban ────────────────────────────────────────────────────
 router.use('/transactions', transactionRouter);
 router.use('/events', eventRouter);
 router.use('/contracts', contractRouter);

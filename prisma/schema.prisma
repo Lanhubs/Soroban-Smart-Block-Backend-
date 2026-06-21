@@ -54,10 +54,35 @@ model WasmUpgradeHistory {
   transactionHash String?
   createdAt       DateTime @default(now())
 
+  // ── Phase 1: upgrade provenance ──────────────────────────────────────────
+  upgrader                  String?  // account that authorised the upgrade
+  upgraderAccountAgeLedgers Int?     // age (in ledgers) of the upgrader account at upgrade time
+
+  // ── Phase 3: WASM diff classification ────────────────────────────────────
+  changeClassification String?  // "minor" | "moderate" | "major" | "critical"
+  changeSummary        String?  // natural-language description of the change
+  diffStats            Json?    // { opcodeChurn, addedOpcodes, removedOpcodes, addedFunctions, removedFunctions, ... }
+  criticalFnChanges    String[] // critical functions added/removed/changed by this upgrade
+
+  // ── Phase 2: governance analysis ─────────────────────────────────────────
+  governanceType       String?  // "single_key" | "multisig" | "timelock" | "dao" | "unknown"
+  signerCount          Int?     // number of signers on the upgrader authority
+  threshold            Int?     // signature weight / threshold required
+  timelockSeconds      Int?     // enforced delay before the upgrade could execute, if any
+  daoProposalId        String?  // correlated governance proposal id, if any
+  decentralizationScore Int?    // 0-100 decentralisation methodology score
+
+  // ── Phase 4: suspicious activity ─────────────────────────────────────────
+  suspiciousFlags String[] // machine-readable flags e.g. "post_vuln_upgrade", "new_account_upgrader"
+  isSuspicious    Boolean  @default(false)
+  riskLevel       String?  // "none" | "low" | "medium" | "high" | "critical"
+
   contract Contract @relation(fields: [contractAddress], references: [address])
 
   @@index([contractAddress, ledgerSequence])
   @@index([ledgerSequence])
+  @@index([isSuspicious])
+  @@index([changeClassification])
 }
 
 model Transaction {

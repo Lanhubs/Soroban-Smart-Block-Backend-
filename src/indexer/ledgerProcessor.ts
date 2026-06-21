@@ -23,7 +23,9 @@ export async function processLedgerRange(start: number, end: number): Promise<vo
     await barrierUpsertLedger(event.ledgerSequence, event.ledgerCloseTime);
     await barrierUpsertContract(event.contractId);
 
-    const existingTx = await prisma.transaction.findUnique({ where: { hash: event.transactionHash } });
+    const existingTx = await prisma.transaction.findUnique({
+      where: { hash: event.transactionHash },
+    });
     if (!existingTx) {
       const txResult = await getTransaction(event.transactionHash).catch(() => null);
       const rawXdr = (txResult as any)?.envelopeXdr?.toXDR('base64') ?? '';
@@ -36,9 +38,19 @@ export async function processLedgerRange(start: number, end: number): Promise<vo
               rawXdr,
               error: err,
             });
-            return { contractAddress: event.contractId, functionName: null, functionArgs: null, humanReadable: null };
+            return {
+              contractAddress: event.contractId,
+              functionName: null,
+              functionArgs: null,
+              humanReadable: null,
+            };
           })
-        : { contractAddress: event.contractId, functionName: null, functionArgs: null, humanReadable: null };
+        : {
+            contractAddress: event.contractId,
+            functionName: null,
+            functionArgs: null,
+            humanReadable: null,
+          };
 
       // #48: Extract Soroban resource consumption from result meta XDR
       const resultMetaXdr = (txResult as any)?.resultMetaXdr?.toXDR?.('base64') ?? '';
@@ -53,7 +65,9 @@ export async function processLedgerRange(start: number, end: number): Promise<vo
         const resultXdr = (txResult as any)?.resultXdr?.toXDR?.('base64') ?? '';
         if (resultXdr) {
           const parsed = safeXdrParse(() => parseFailureReason(resultXdr), null, 'FailureReason');
-          failureReason = parsed ? `${parsed.reason}${parsed.detail ? `: ${parsed.detail}` : ''}` : null;
+          failureReason = parsed
+            ? `${parsed.reason}${parsed.detail ? `: ${parsed.detail}` : ''}`
+            : null;
         }
         // Fallback: parse from error string if available
         if (!failureReason) {
@@ -72,12 +86,12 @@ export async function processLedgerRange(start: number, end: number): Promise<vo
           sourceAccount: (txResult as any)?.sourceAccount ?? 'unknown',
           contractAddress: decoded.contractAddress,
           functionName: decoded.functionName,
-          functionArgs: decoded.functionArgs as object ?? undefined,
+          functionArgs: (decoded.functionArgs as object) ?? undefined,
           rawXdr,
           status: txStatus,
           humanReadable: decoded.humanReadable,
           feeCharged: String((txResult as any)?.feeCharged ?? ''),
-          sorobanResources: sorobanResources as object ?? undefined,
+          sorobanResources: (sorobanResources as object) ?? undefined,
           failureReason,
         },
       });

@@ -22,6 +22,7 @@ import { warmTokenMetadataCache } from './indexer/token-metadata';
 import { cacheConnect } from './cache';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './logger';
+import { feedOrchestrator } from './feed/orchestrator';
 
 const app = express();
 
@@ -68,6 +69,25 @@ async function main() {
 
   const httpServer = createServer(app);
   attachWebSocketServer(httpServer);
+  attachPrivacyWebSocket(httpServer);
+  attachComposabilityWebSocket(httpServer);
+  attachArbitrageWebSocket(httpServer);
+
+  if (!process.env.DISABLE_INDEXER) {
+    try {
+      startPoolPriceMonitor();
+    } catch (err) {
+      logger.warn('Pool price monitor failed to start', { error: String(err) });
+    }
+    try {
+      startArbitrageScanner();
+    } catch (err) {
+      logger.warn('Arbitrage scanner failed to start', { error: String(err) });
+    }
+  }
+
+  // Initialize Feed Orchestrator with WebSocket support
+  await feedOrchestrator.initialize(httpServer);
 
   httpServer.listen(config.port, () => {
     logger.info('Soroban Explorer API started', { port: config.port });
