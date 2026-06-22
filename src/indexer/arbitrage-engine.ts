@@ -211,18 +211,18 @@ export function detectNegativeCycles(graph: PriceGraph, maxHops = 5): ArbitrageC
         const node = Array.from(graph.nodes.get(from) ?? []).find((n) => n.poolId === poolId);
         dexNames.push(node?.dexName ?? '');
 
-        const cycleKey = [...cyclePath].sort().join('-');
+        const cycleKey = [...path].sort().join('-');
         if (!seen.has(cycleKey)) {
           seen.add(cycleKey);
           const totalLogCost = poolIds.reduce((acc, pid, idx) => {
-            const tk = fullPath[idx];
-            const tkNext = fullPath[idx + 1];
+            const tk = path[idx];
+            const tkNext = path[idx + 1] ?? path[0];
             const w = graph.edges.get(`${tk}:${tkNext}:${pid}`) ?? 0;
             return acc + w;
           }, 0);
           const profitMultiplier = Math.exp(-totalLogCost);
           if (profitMultiplier > 1.0001) {
-            cycles.push({ path: fullPath, poolIds, dexNames, profitMultiplier });
+            cycles.push({ path, poolIds, dexNames, profitMultiplier });
           }
         }
       }
