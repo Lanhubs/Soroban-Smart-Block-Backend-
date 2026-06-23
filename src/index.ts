@@ -14,7 +14,7 @@ import { sanitizeInputs } from './middleware/sanitize';
 import { i18nMiddleware } from './i18n';
 import { registry, dbConnectionStatus } from './metrics';
 import { replicaGuard } from './middleware/replicaGuard';
-import { coldStorageRouter } from './middleware/coldStorageRouter';
+import { coldStorageRouter, initializeColdStorage } from './middleware/coldStorageRouter';
 import { networkRouter } from './middleware/networkRouter';
 import { swaggerSpec } from './indexer/swaggerSpec';
 import { attachWebSocketServer } from './ws/eventBroadcaster';
@@ -80,6 +80,7 @@ async function main() {
   await cacheConnect();
   await prisma.$connect();
   dbConnectionStatus.set(1);
+  await initializeColdStorage();
 
   if (!process.env.DISABLE_INDEXER) {
     startIndexerService().catch((err) =>
