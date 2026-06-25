@@ -25,7 +25,8 @@
     "no-console": "off",
     "prefer-const": "error",
     "no-var": "error",
-    "error-handling/require-async-handler": "error"
+    "error-handling/require-async-handler": "error",
+    "error-handling/no-phantom-prisma-field": "warn"
   },
   "ignorePatterns": ["dist/", "node_modules/"]
 }

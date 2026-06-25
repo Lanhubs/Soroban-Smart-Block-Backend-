@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { EnsembleForecaster } from '../predictive/ensemble';
 import { featureStore } from '../indexer/feature-store';
-import prisma from '../db';
+import { prismaWrite as prisma } from '../db';
 import crypto from 'crypto';
 import { asyncHandler } from '../middleware/asyncHandler';
 

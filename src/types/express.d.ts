@@ -15,5 +15,7 @@ declare namespace Express {
     traceId: string;
     /** OpenTelemetry / B3 span ID of the root server span. */
     spanId: string;
+    /** Admin actor identity set by adminAuth middleware (freeze, audit routes). */
+    actor?: string;
   }
 }

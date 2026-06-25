@@ -8,8 +8,14 @@ vi.mock('../src/db', () => ({
 }));
 vi.mock('../src/logger', () => ({ logger: { warn: vi.fn() } }));
 
-import { apiKeyAuth, requireApiKey, requireKeyTier } from '../src/middleware/apiKeyAuth';
+import {
+  apiKeyAuth,
+  requireApiKey,
+  requireKeyTier,
+  _keyCacheKeys,
+} from '../src/middleware/apiKeyAuth';
 import { prismaRead } from '../src/db';
+import crypto from 'crypto';
 
 const mockFind = (prismaRead as any).devApiKey.findFirst as ReturnType<typeof vi.fn>;
 
@@ -119,6 +125,20 @@ describe('apiKeyAuth', () => {
     await apiKeyAuth(req, res, next);
     // Should hash the key and do a safe DB lookup — not crash
     expect(status).toHaveBeenCalledWith(401);
+  });
+
+  it('stores only SHA-256 hash in cache, never the raw credential', async () => {
+    const rawKey = 'super-secret-api-key-do-not-store';
+    mockFind.mockResolvedValue(VALID_RECORD);
+    const req = makeReq({ 'x-api-key': rawKey });
+    const { res } = makeRes();
+    await apiKeyAuth(req, res, next);
+
+    const cacheKeys = _keyCacheKeys();
+    const expectedHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+
+    expect(cacheKeys).not.toContain(rawKey);
+    expect(cacheKeys).toContain(expectedHash);
   });
 });
 

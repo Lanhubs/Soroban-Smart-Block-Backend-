@@ -37,8 +37,8 @@ async function logAudit(
       actor,
       action,
       target,
-      previousState: previousState ? JSON.stringify(previousState) : null,
-      newState: newState ? JSON.stringify(newState) : null,
+      previousState: previousState ? JSON.stringify(previousState) : undefined,
+      newState: newState ? JSON.stringify(newState) : undefined,
       reason,
     },
   });
@@ -106,12 +106,11 @@ freezeRouter.post('/keys', adminAuth, async (req: Request, res: Response) => {
     const newKey = await prisma.frozenLedgerKey.create({
       data: {
         ledgerKey,
-        contractAddress,
+        contractAddress: contractAddress ?? '',
+        active: true,
         frozenAtLedger,
         frozenAtTime: new Date(),
         reason,
-        frozenBy: actor,
-        metadata: metadata ? metadata : undefined,
       },
     });
 
@@ -243,8 +242,6 @@ freezeRouter.patch('/violations/:id', adminAuth, async (req: Request, res: Respo
       data: {
         resolution: parsed.data.resolution,
         ...(parsed.data.severity && { severity: parsed.data.severity }),
-        resolvedBy: actor,
-        resolvedAt: new Date(),
       },
     });
 
@@ -301,7 +298,7 @@ freezeRouter.get('/audit-log', async (req: Request, res: Response) => {
       where,
       take: limit,
       skip: offset,
-      orderBy: { timestamp: 'desc' },
+      orderBy: { createdAt: 'desc' },
     });
 
     const total = await prisma.auditLog.count({ where });

@@ -2288,19 +2288,19 @@ model PrivacyAnalytics {
 }
 
 model PrivacyComplianceReport {
-  id                String    @id @default(cuid())
-  address           String    @unique
+  id                String   @id @default(cuid())
+  address           String   @unique
   totalPrivateTx    Int?
   protocolsUsed     String[]
   riskScore         Float?
   flagged           Boolean
   flagReason        String?
   complianceLabel   String?
-  linkedAddresses   Json?
-  lastActivity      DateTime?
-  reportGeneratedAt DateTime?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  linkedAddresses   String[]
+  lastActivity      DateTime
+  reportGeneratedAt DateTime
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 }
 
 model PrivacyProtocolDetail {
@@ -2320,16 +2320,20 @@ model PrivacyTransaction {
   id                     String   @id @default(cuid())
   txHash                 String   @unique
   timestamp              DateTime
-  protocols              Json?
-  guarantees             Json?
+  protocols              String[]
+  guarantees             String[]
+  cryptographicPrimitives Json?
   anonymitySetSize       Int?
   effectiveAnonymitySet  Int?
   privacyScore           Float?
   riskScore              Float?
-  totalValue             Float?
+  totalValue             String?
   usdValue               Float?
+  assetType              String?
   participants           String[]
   contractAddresses      String[]
+  participantCount       Int?
+  ledgerSequence         Int?
   sourceAccount          String?
   createdAt              DateTime @default(now())
 }
@@ -2872,9 +2876,9 @@ model WebhookSubscription {
   contractAddress String?
   eventType       String?
   topicSymbol     String?
-  active          Boolean
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   delivery WebhookDelivery[]
 }
@@ -3805,4 +3809,127 @@ model BridgeVolume {
   @@index([chain, period])
   @@index([periodStart])
   @@map("bridge_volumes")
+}
+
+// ── Auth models ───────────────────────────────────────────────────────────────
+
+model WalletUser {
+  id          String    @id @default(cuid())
+  address     String    @unique
+  role        String    @default("user")
+  tier        String    @default("free")
+  displayName String?
+  email       String?
+  avatarUrl   String?
+  isActive    Boolean   @default(true)
+  isMultiSig  Boolean   @default(false)
+  metadata    Json      @default("{}")
+  lastLogin   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  sessions AuthSession[]
+  events   AuthEvent[]
+  webhooks AuthWebhook[]
+
+  @@index([address])
+  @@map("wallet_users")
+}
+
+model AuthSession {
+  id                String    @id
+  userId            String
+  tokenHash         String
+  refreshTokenHash  String
+  deviceInfo        Json?
+  appId             String?
+  isActive          Boolean   @default(true)
+  revokedAt         DateTime?
+  revocationReason  String?
+  lastActivity      DateTime  @default(now())
+  expiresAt         DateTime
+  createdAt         DateTime  @default(now())
+
+  user WalletUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@index([refreshTokenHash])
+  @@map("auth_sessions")
+}
+
+model AuthEvent {
+  id        String   @id @default(cuid())
+  userId    String
+  sessionId String?
+  eventType String
+  ipAddress String?
+  userAgent String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  user WalletUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([eventType])
+  @@index([createdAt])
+  @@map("auth_events")
+}
+
+model AuthWebhook {
+  id        String   @id @default(cuid())
+  userId    String
+  url       String
+  events    Json
+  secret    String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  user WalletUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("auth_webhooks")
+}
+
+model MultiSigWallet {
+  id            String   @id @default(cuid())
+  walletAddress String   @unique
+  signers       Json
+  threshold     Int
+  description   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("multisig_wallets")
+}
+
+model OAuthApp {
+  id           String   @id @default(cuid())
+  clientId     String   @unique
+  clientSecret String
+  name         String
+  redirectUris Json
+  scopes       Json
+  ownerId      String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  @@index([ownerId])
+  @@map("oauth_apps")
+}
+
+model OAuthCode {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  clientId    String
+  userId      String
+  redirectUri String
+  scopes      Json
+  used        Boolean  @default(false)
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([clientId])
+  @@index([userId])
+  @@map("oauth_codes")
 }
