@@ -8,6 +8,7 @@
 import { Router, Request, Response } from 'express';
 import { prismaRead as prisma } from '../db';
 import { getLatestLedger } from '../indexer/rpc';
+import { asyncHandler } from '../middleware/asyncHandler';
 
 /**
  * @swagger
@@ -40,47 +41,9 @@ export async function getSyncState(): Promise<{
   };
 }
 
-/**
- * @swagger
- * /api/v1/sync-state:
- *   get:
- *     summary: Get indexer synchronisation status
- *     description: Returns the highest ledger stored in the database compared to the live network tip, with a sync percentage.
- *     tags: [Sync State]
- *     responses:
- *       200:
- *         description: Current sync status
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 dbLedger:
- *                   type: integer
- *                   description: Highest ledger sequence stored in the database
- *                   example: 3168070
- *                 networkLedger:
- *                   type: integer
- *                   description: Current ledger sequence on the live Stellar network
- *                   example: 3168075
- *                 syncPercent:
- *                   type: number
- *                   description: Percentage of ledgers indexed (0–100)
- *                   example: 99.9
- *                 isSynced:
- *                   type: boolean
- *                   description: True when dbLedger >= networkLedger
- *                   example: false
- *       500:
- *         description: Failed to query DB or RPC
- *         content:
- *           application/json:
- *             schema: { $ref: '#/components/schemas/Error' }
- */
-syncStateRouter.get('/', async (_req: Request, res: Response) => {
-  try {
+syncStateRouter.get(
+  '/',
+  asyncHandler(async (_req: Request, res: Response) => {
     res.json(await getSyncState());
-  } catch (e) {
-    res.status(500).json({ error: String(e) });
-  }
-});
+  }),
+);

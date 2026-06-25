@@ -11,6 +11,7 @@ import { prismaRead as prisma } from '../db';
 import { runGasAnalytics } from '../indexer/gasAnalytics';
 import { z } from 'zod';
 import { protocolEconomicsRouter } from './protocol-economics';
+import { asyncHandler } from '../middleware/asyncHandler';
 
 /**
  * @swagger
@@ -67,8 +68,9 @@ const querySchema = z.object({
  *             schema: { $ref: '#/components/schemas/Error' }
  */
 // GET /analytics/gas — return pre-computed snapshots
-analyticsRouter.get('/gas', async (req: Request, res: Response) => {
-  try {
+analyticsRouter.get(
+  '/gas',
+  asyncHandler(async (req: Request, res: Response) => {
     const { bucket, limit } = querySchema.parse(req.query);
 
     const snapshots = await prisma.gasAnalyticsSnapshot.findMany({
@@ -78,42 +80,17 @@ analyticsRouter.get('/gas', async (req: Request, res: Response) => {
     });
 
     res.json({ bucket, data: snapshots });
-  } catch (e) {
-    res.status(400).json({ error: String(e) });
-  }
-});
+  }),
+);
 
 // POST /analytics/gas/run — on-demand trigger
-/**
- * @swagger
- * /api/v1/analytics/gas/run:
- *   post:
- *     summary: Trigger on-demand gas analytics recomputation
- *     description: Reruns the gas analytics aggregation job immediately.
- *     tags: [Analytics]
- *     responses:
- *       200:
- *         description: Job completed successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 ok: { type: boolean, example: true }
- *       500:
- *         description: Job failed
- *         content:
- *           application/json:
- *             schema: { $ref: '#/components/schemas/Error' }
- */
-analyticsRouter.post('/gas/run', async (_req: Request, res: Response) => {
-  try {
+analyticsRouter.post(
+  '/gas/run',
+  asyncHandler(async (_req: Request, res: Response) => {
     await runGasAnalytics();
     res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: String(e) });
-  }
-});
+  }),
+);
 
 // ── Protocol Economic Dashboard (#301) ────────────────────────────────────────
 analyticsRouter.use('/protocol-economics', protocolEconomicsRouter);
