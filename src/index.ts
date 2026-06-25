@@ -34,6 +34,7 @@ import { writeFile, mkdir } from 'fs/promises';
 import { resolve } from 'path';
 import { apiKeyAuth } from './middleware/apiKeyAuth';
 import { auditLogMiddleware } from './middleware/auditLog';
+import { asyncHandler } from './middleware/asyncHandler';
 import { billingRouter } from './services/stripe-billing';
 
 let isShuttingDown = false;
@@ -103,7 +104,12 @@ app.use(auditLogMiddleware);
 
 app.use(coldStorageRouter);
 
-app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+// Interactive Swagger UI is disabled in production unless ENABLE_DOCS=true.
+// The raw schema endpoints remain available for tooling/codegen in all envs.
+const docsEnabled = config.nodeEnv !== 'production' || process.env.ENABLE_DOCS === 'true';
+if (docsEnabled) {
+  app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+}
 app.get('/api/docs.json', (_req, res) => res.json(swaggerSpec));
 app.get('/api/v1/openapi.json', (_req, res) => res.json(swaggerSpec));
 
@@ -112,10 +118,13 @@ app.use('/api/graphql', yogaHandler as unknown as express.RequestHandler);
 app.use('/api/v1', router);
 app.use('/api/billing', billingRouter);
 
-app.get('/metrics', asyncHandler(async (_req, res) => {
-  res.set('Content-Type', registry.contentType);
-  res.end(await registry.metrics());
-}));
+app.get(
+  '/metrics',
+  asyncHandler(async (_req, res) => {
+    res.set('Content-Type', registry.contentType);
+    res.end(await registry.metrics());
+  }),
+);
 
 app.get('/health', (_req, res) => {
   if (isShuttingDown) {
