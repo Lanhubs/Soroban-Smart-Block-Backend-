@@ -108,3 +108,10 @@ router.use('/freeze', requireApiKey, freezeRouter);
 router.use('/predict', requireApiKey, predictRouter);
 // forecast.ts exposes alternative model-management paths under /forecast/predict/…
 router.use('/forecast', requireApiKey, forecastRouter);
+
+// ── Realtime Feed ─────────────────────────────────────────────────────────────
+import feedRouter from './feed';
+import feedSSERouter from './feedSSE';
+// SSE stream sits under /feed/sse; must be mounted before the broader /feed prefix
+router.use('/feed/sse', feedSSERouter);
+router.use('/feed', feedRouter);
