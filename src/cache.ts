@@ -54,6 +54,15 @@ export async function cacheConnect(): Promise<void> {
   await getRedisClient();
 }
 
+/**
+ * Returns true when the cache layer is operational:
+ * - always true when using the in-process memory store (no Redis configured)
+ * - true only after a successful Redis connection when a Redis URL is configured
+ */
+export function isCacheReady(): boolean {
+  return !USE_REDIS || redisAvailable;
+}
+
 export async function cacheClose(): Promise<void> {
   if (redisClient) {
     try {

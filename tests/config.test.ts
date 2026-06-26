@@ -150,6 +150,7 @@ describe('config — network profile wiring', () => {
     vi.stubEnv('STELLAR_NETWORK', 'mainnet');
     vi.stubEnv('MAINNET_DATABASE_URL', 'postgresql://localhost/mainnet');
     vi.stubEnv('MAINNET_RPC_URL', 'https://mainnet.stellar.org/rpc');
+    vi.stubEnv('MAINNET_RPC_WS_URL', 'wss://mainnet.stellar.org/rpc');
     const cfg = await loadConfig();
     expect(cfg.stellarNetwork).toBe('mainnet');
     expect(cfg.networkPassphrase).toContain('Public Global Stellar Network');

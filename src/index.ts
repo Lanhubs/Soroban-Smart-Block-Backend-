@@ -25,7 +25,8 @@ import { attachWebSocketServer, shutdownWebSocketServer } from './ws/eventBroadc
 import { attachPrivacyWebSocket as attachPrivacyWebSocketReal } from './ws/privacyBroadcaster';
 import yogaHandler from './graphql';
 import { warmTokenMetadataCache } from './indexer/token-metadata';
-import { cacheConnect, cacheClose } from './cache';
+import { cacheConnect, cacheClose, isCacheReady } from './cache';
+import { markReady, markNotReady, getReadinessState, isFullyReady } from './readiness';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './logger';
 import { feedOrchestrator } from './feed/orchestrator';
@@ -160,9 +161,13 @@ app.get('/health', (_req, res) => {
 
 app.get('/readyz', (_req, res) => {
   if (isShuttingDown) {
-    return res.status(503).json({ status: 'not_ready' });
+    return res.status(503).json({ status: 'not_ready', reason: 'shutting_down' });
   }
-  res.json({ status: 'ready' });
+  const dependencies = getReadinessState();
+  if (!isFullyReady()) {
+    return res.status(503).json({ status: 'not_ready', dependencies });
+  }
+  res.json({ status: 'ready', dependencies });
 });
 
 app.use(errorHandler);
@@ -254,18 +259,28 @@ async function main() {
   registerShutdownHandlers();
 
   await initRateLimitStore();
+
   await cacheConnect();
+  if (isCacheReady()) markReady('cache');
+
   await prisma.$connect();
   dbConnectionStatus.set(1);
+  markReady('db');
+
   await initializeColdStorage();
+  markReady('coldStorage');
 
   if (!process.env.DISABLE_INDEXER) {
-    startIndexerService().catch((err) =>
-      logger.error('Indexer service failed', { error: String(err) }),
-    );
+    markReady('indexer');
+    startIndexerService().catch((err) => {
+      logger.error('Indexer service failed', { error: String(err) });
+      markNotReady('indexer');
+    });
     warmTokenMetadataCache().catch((err) =>
       logger.warn('Token-metadata cache warm-up failed', { error: String(err) }),
     );
+  } else {
+    markReady('indexer');
   }
 
   const httpServer: Server = createServer(app);

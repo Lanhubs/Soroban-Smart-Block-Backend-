@@ -21,6 +21,9 @@ describe('profiles — getProfile', () => {
   });
 
   it('returns mainnet profile', async () => {
+    vi.stubEnv('MAINNET_RPC_URL', 'https://mainnet.rpc.example.com');
+    vi.stubEnv('MAINNET_RPC_WS_URL', 'wss://mainnet.rpc.example.com');
+    vi.stubEnv('MAINNET_DATABASE_URL', 'postgresql://mainnet-db/soroban');
     const { getProfile } = await loadProfiles();
     const p = getProfile('mainnet');
     expect(p.name).toBe('mainnet');
@@ -114,6 +117,8 @@ describe('profiles — env var overrides', () => {
 
   it('mainnet rpcUrl set via env', async () => {
     vi.stubEnv('MAINNET_RPC_URL', 'https://mainnet.validationcloud.io/rpc');
+    vi.stubEnv('MAINNET_RPC_WS_URL', 'wss://mainnet.validationcloud.io/rpc');
+    vi.stubEnv('MAINNET_DATABASE_URL', 'postgresql://mainnet-db/soroban');
     const { getProfile } = await loadProfiles();
     const p = getProfile('mainnet');
     expect(p.rpcUrl).toBe('https://mainnet.validationcloud.io/rpc');
