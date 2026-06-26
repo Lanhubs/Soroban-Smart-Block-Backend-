@@ -1,6 +1,7 @@
 import axios from 'axios';
 import crypto from 'crypto';
 import { prismaWrite as prisma } from '../db';
+import { processResponseBody } from './redaction';
 
 // Maximum delivery attempts before a delivery is marked permanently failed
 export const MAX_ATTEMPTS = 5;
@@ -36,6 +37,15 @@ export async function dispatchWebhooks(event: WebhookPayload): Promise<void> {
         OR: [{ contractAddress: null }, { contractAddress: event.contractAddress }],
       }),
     },
+    select: {
+      id: true,
+      url: true,
+      secret: true,
+      eventType: true,
+      topicSymbol: true,
+      storeResponseBody: true,
+      responseRetentionDays: true,
+    },
   });
 
   const matching = subs.filter((s) => {
@@ -44,7 +54,20 @@ export async function dispatchWebhooks(event: WebhookPayload): Promise<void> {
     return true;
   });
 
-  await Promise.all(matching.map((sub) => deliverOnce(sub.id, sub.url, sub.secret, event, 1)));
+  await Promise.all(
+    matching.map((sub) =>
+      deliverOnce(
+        sub.id,
+        sub.url,
+        sub.secret,
+        event,
+        1,
+        undefined,
+        sub.storeResponseBody,
+        sub.responseRetentionDays,
+      ),
+    ),
+  );
 }
 
 /**
@@ -54,7 +77,17 @@ export async function dispatchWebhooks(event: WebhookPayload): Promise<void> {
 export async function retryPendingDeliveries(): Promise<void> {
   const due = await prisma.webhookDelivery.findMany({
     where: { status: 'pending', nextRetryAt: { lte: new Date() } },
-    include: { subscription: { select: { url: true, secret: true, active: true } } },
+    include: {
+      subscription: {
+        select: {
+          url: true,
+          secret: true,
+          active: true,
+          storeResponseBody: true,
+          responseRetentionDays: true,
+        },
+      },
+    },
   });
 
   await Promise.all(
@@ -66,6 +99,8 @@ export async function retryPendingDeliveries(): Promise<void> {
         null,
         d.attempt,
         d.id,
+        d.subscription.storeResponseBody,
+        d.subscription.responseRetentionDays,
       ),
     ),
   );
@@ -82,6 +117,8 @@ async function deliverOnce(
   event: WebhookPayload | null,
   attempt: number,
   deliveryId?: string,
+  storeResponseBody: boolean = true,
+  responseRetentionDays: number = 90,
 ): Promise<void> {
   // Resolve payload — for retries we re-fetch from the delivery row's eventId
   let payload: WebhookPayload | null = event;
@@ -116,6 +153,9 @@ async function deliverOnce(
     headers['X-Webhook-Signature'] = `sha256=${sig}`;
   }
 
+  // Calculate expiration time based on retention policy
+  const expiresAt = new Date(Date.now() + responseRetentionDays * 24 * 60 * 60 * 1000);
+
   // Create or update the delivery row to "pending" before attempting
   const delivery = deliveryId
     ? await prisma.webhookDelivery.update({
@@ -123,7 +163,7 @@ async function deliverOnce(
         data: { attempt, status: 'pending', nextRetryAt: null },
       })
     : await prisma.webhookDelivery.create({
-        data: { subscriptionId, eventId, attempt, status: 'pending' },
+        data: { subscriptionId, eventId, attempt, status: 'pending', expiresAt },
       });
 
   try {
@@ -134,31 +174,40 @@ async function deliverOnce(
     });
 
     const success = response.status >= 200 && response.status < 300;
-    const responseBody = String(response.data ?? '').slice(0, 500);
+    const rawResponseBody = String(response.data ?? '');
 
     if (success) {
+      const processedResponseBody = storeResponseBody
+        ? processResponseBody(rawResponseBody, 500, true)
+        : null;
+
       await prisma.webhookDelivery.update({
         where: { id: delivery.id },
         data: {
           status: 'success',
           httpStatus: response.status,
-          responseBody,
+          responseBody: processedResponseBody,
           deliveredAt: new Date(),
         },
       });
       return;
     }
 
+    const processedResponseBody = storeResponseBody
+      ? processResponseBody(rawResponseBody, 500, true)
+      : null;
+
     await scheduleRetryOrFail(
       delivery.id,
       attempt,
       `HTTP ${response.status}`,
       response.status,
-      responseBody,
+      processedResponseBody,
     );
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    await scheduleRetryOrFail(delivery.id, attempt, msg, undefined, undefined);
+    const processedError = storeResponseBody ? processResponseBody(msg, 500, true) : null;
+    await scheduleRetryOrFail(delivery.id, attempt, msg, undefined, processedError);
   }
 }
 

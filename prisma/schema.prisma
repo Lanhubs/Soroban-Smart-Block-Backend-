@@ -1269,6 +1269,8 @@ model DevWebhook {
   retryPolicy       Json?
   headers           Json?
   active            Boolean   @default(true)
+  storeResponseBody Boolean   @default(true)
+  responseRetentionDays Int   @default(90)
   lastDeliveryAt    DateTime?
   lastDeliveryStatus String?
   createdAt         DateTime  @default(now())
@@ -1291,12 +1293,14 @@ model DevWebhookDelivery {
   attempt      Int       @default(1)
   delivered    Boolean   @default(false)
   deliveredAt  DateTime?
+  expiresAt    DateTime?
   createdAt    DateTime  @default(now())
 
   webhook DevWebhook @relation(fields: [webhookId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
   @@index([webhookId])
   @@index([delivered])
+  @@index([expiresAt])
 }
 
 model UsageRecord {
@@ -2862,11 +2866,13 @@ model WebhookDelivery {
   errorMsg       String?
   deliveredAt    DateTime?
   nextRetryAt    DateTime?
+  expiresAt      DateTime?
   createdAt      DateTime  @default(now())
 
   subscription WebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
 
   @@index([subscriptionId])
+  @@index([expiresAt])
 }
 
 model WebhookSubscription {
@@ -2877,6 +2883,8 @@ model WebhookSubscription {
   eventType       String?
   topicSymbol     String?
   active          Boolean  @default(true)
+  storeResponseBody Boolean @default(true)
+  responseRetentionDays Int @default(90)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
