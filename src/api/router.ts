@@ -105,3 +105,7 @@ router.use('/gas', gasRouter);
 import { sdksRouter, openApiSpecRouter } from './sdks';
 router.use('/sdks', sdksRouter);
 router.use('/', openApiSpecRouter);
+
+// ── Token Holder Analytics (#283) ─────────────────────────────────────────────
+import { tokenHoldersRouter } from './token-holders';
+router.use('/token-holders', tokenHoldersRouter);
