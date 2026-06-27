@@ -58,7 +58,6 @@ const PENDING_SCHEMA_ROUTERS = new Set([
   'bn254.ts',
   'checked-arithmetic.ts',
   'commodity-compliance.ts',
-  'compiler-router.ts',
   'composability.ts',
   'dex-analytics.ts',
   'dex.ts',

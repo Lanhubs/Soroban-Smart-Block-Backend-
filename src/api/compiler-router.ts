@@ -19,8 +19,41 @@ import {
   cleanupDir,
   ToolchainEnum,
 } from './compiler';
+import { getQueueMetrics } from './build-queue';
+import type { RateLimitTier } from '../middleware/tokenBucket';
 
 export const compilerRouter = Router();
+
+// Middleware to check build quota before processing compile/verify
+/**
+ * Middleware that validates build quota availability for the request's API tier.
+ * Adds X-Compiler-Quota headers and rejects with 429 if limit exceeded.
+ */
+function buildQuotaMiddleware(req: Request, res: Response, next: (err?: any) => void) {
+  const tier = (req.apiKey?.tier ?? 'unauthenticated') as RateLimitTier;
+  const active = req.apiKey?.rateLimitResult?.tier
+    ? getActiveBuildCount(req.apiKey.rateLimitResult.tier)
+    : 0;
+  const limit = getConcurrencyLimit(tier);
+
+  // Set quota headers for visibility
+  res.setHeader('X-Compiler-Quota-Limit', String(limit));
+  res.setHeader('X-Compiler-Quota-Active', String(active));
+
+  // Check if there's capacity available
+  if (active >= limit && limit > 0) {
+    res.status(429).json({
+      error: 'Concurrent build limit exceeded for tier',
+      tier,
+      limit,
+      active,
+      retryAfter: 10,
+    });
+    return;
+  }
+
+  next();
+}
 
 // Multer for archive uploads (max 50 MB)
 const upload = multer({
@@ -125,6 +158,7 @@ compilerRouter.get('/', (_req: Request, res: Response) => {
  */
 compilerRouter.post(
   '/compile',
+  buildQuotaMiddleware,
   upload.single('source'),
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.file) {
@@ -197,6 +231,7 @@ compilerRouter.post(
  */
 compilerRouter.post(
   '/verify',
+  buildQuotaMiddleware,
   upload.single('source'),
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.file) {
@@ -288,5 +323,28 @@ compilerRouter.get('/toolchains', (_req: Request, res: Response) => {
       'Builds run in sandboxed temp directories',
       'Network access disabled during compilation (CARGO_NET_OFFLINE=true)',
     ],
+  });
+});
+
+// ── GET /metrics ───────────────────────────────────────────────────────────────
+
+/**
+ * @swagger
+ * /compiler/metrics:
+ *   get:
+ *     summary: Build queue metrics and resource usage
+ *     tags: [Compiler]
+ *     responses:
+ *       200:
+ *         description: Build queue metrics by tier
+ */
+compilerRouter.get('/metrics', (_req: Request, res: Response) => {
+  res.json({
+    queueMetrics: getQueueMetrics(),
+    quotas: {
+      developer: { concurrency: 2, memoryMb: 1024, timeoutSec: 120 },
+      pro: { concurrency: 5, memoryMb: 2048, timeoutSec: 180 },
+      enterprise: { concurrency: 10, memoryMb: 4096, timeoutSec: 240 },
+    },
   });
 });

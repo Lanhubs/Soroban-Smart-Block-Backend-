@@ -42,15 +42,12 @@ import { portfolioRouter } from './portfolio';
 import { alertsRouter } from './alerts';
 
 // ── CSV Exports ───────────────────────────────────────────────────────────────
-import { exportsRouter } from './exports';
-import { requireApiKey } from '../middleware/apiKeyAuth';
+import { requireApiKey, requireKeyTier } from '../middleware/apiKeyAuth';
+import { compilerRouter } from './compiler-router';
 
 // ── Freeze Management ─────────────────────────────────────────────────────────
-import { freezeRouter } from './freeze';
 
 // ── Predictive Analytics ──────────────────────────────────────────────────────
-import { predictRouter } from './predict';
-import forecastRouter from './forecast';
 
 export const router = Router();
 
@@ -66,6 +63,8 @@ router.use('/render', renderRouter);
 // simulate and verify invoke Soroban RPC and perform heavy analysis — key required
 router.use('/simulate', requireApiKey, simulateRouter);
 router.use('/verify', requireApiKey, verifyRouter);
+// compiler endpoints require developer+ tier (expensive builds)
+router.use('/compiler', requireKeyTier('developer'), compilerRouter);
 router.use('/sync-state', syncStateRouter);
 router.use('/network', networkRouter);
 router.use('/token-metadata', tokenMetadataRouter);
