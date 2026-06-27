@@ -3941,3 +3941,190 @@ model OAuthCode {
   @@index([userId])
   @@map("oauth_codes")
 }
+
+// ---------------------------------------------------------------------------
+// Issue #293 — Multi-Dimensional Gas Cost Analytics
+// ---------------------------------------------------------------------------
+
+model GasAnalytics {
+  id                   String   @id @default(cuid())
+  txHash               String   @unique
+  contractAddress      String
+  functionName         String
+  cpuInstructions      Int
+  memoryBytes          Int
+  ledgerReadBytes      Int
+  ledgerWriteBytes     Int
+  ledgerEntryCount     Int
+  contractEventsBytes  Int
+  returnValueBytes     Int
+  hostFunctionCalls    Int
+  contractCalls        Int
+  storageAccesses      Int
+  codeSize             Int?
+  txSizeBytes          Int
+  totalFee             String
+  effectiveFeePerInstr String
+  ledgerSequence       Int
+  ledgerCloseTime      DateTime
+  failureFlag          Boolean  @default(false)
+  errorCode            String?
+
+  @@index([contractAddress, functionName])
+  @@index([ledgerCloseTime])
+  @@index([cpuInstructions])
+  @@index([totalFee])
+}
+
+model GasBenchmark {
+  id               String   @id @default(cuid())
+  contractAddress  String
+  functionName     String
+  arguments        Json?
+  cpuInstructions  Int
+  memoryBytes      Int
+  ledgerReadBytes  Int
+  ledgerWriteBytes Int
+  ledgerEntryCount Int
+  totalFee         String
+  recordedAt       DateTime
+  source           String
+
+  @@index([contractAddress, functionName])
+}
+
+model GasAlert {
+  id              String    @id @default(cuid())
+  contractAddress String
+  alertType       String
+  severity        String
+  metric          String
+  currentValue    Float
+  baselineValue   Float
+  deviationPct    Float
+  txHash          String?
+  message         String
+  detectedAt      DateTime
+  resolvedAt      DateTime?
+
+  @@index([contractAddress, alertType])
+}
+
+model GasOptimizationSuggestion {
+  id               String    @id @default(cuid())
+  contractAddress  String
+  functionName     String
+  suggestionType   String
+  title            String
+  description      String
+  currentCost      String
+  estimatedSavings String
+  savingsPct       Float
+  effort           String
+  severity         String
+  appliedAt        DateTime?
+  dismissedAt      DateTime?
+
+  @@index([contractAddress])
+}
+
+// ---------------------------------------------------------------------------
+// Issue #292 — Multi-Language SDK Suite
+// ---------------------------------------------------------------------------
+
+model SdkDownload {
+  id           String   @id @default(cuid())
+  language     String
+  version      String
+  platform     String?
+  ipHash       String?
+  userAgent    String?
+  downloadedAt DateTime @default(now())
+}
+
+model SdkVersion {
+  id            String   @id @default(cuid())
+  language      String
+  version       String
+  publishedAt   DateTime @default(now())
+  downloadCount Int      @default(0)
+  apiVersion    String
+  changelog     String?
+  isDeprecated  Boolean  @default(false)
+
+  @@unique([language, version])
+}
+
+model ApiSpecSnapshot {
+  id        String   @id @default(cuid())
+  version   String   @unique
+  spec      Json
+  hash      String
+  createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Issue #283 — Token Holder Analytics
+// ---------------------------------------------------------------------------
+
+model TokenHolder {
+  id              String   @id @default(cuid())
+  contractAddress String
+  holderAddress   String
+  balance         String
+  balanceRaw      Float
+  percentage      Float
+  rank            Int?
+  lastUpdatedAt   DateTime @default(now())
+  firstSeenAt     DateTime @default(now())
+
+  @@unique([contractAddress, holderAddress])
+  @@index([contractAddress, balanceRaw])
+  @@index([contractAddress, rank])
+}
+
+model TokenConcentrationMetrics {
+  id                  String   @id @default(cuid())
+  contractAddress     String
+  nakamotoCoefficient Int?
+  hhi                 Float?
+  giniCoefficient     Float?
+  top10Pct            Float?
+  top100Pct           Float?
+  totalHolders        Int
+  totalSupply         String
+  computedAt          DateTime @default(now())
+
+  @@index([contractAddress, computedAt])
+}
+
+model WhaleAlert {
+  id              String   @id @default(cuid())
+  contractAddress String
+  holderAddress   String
+  alertType       String
+  oldBalance      String?
+  newBalance      String?
+  changeAmt       String?
+  changePct       Float?
+  txHash          String?
+  detectedAt      DateTime @default(now())
+
+  @@index([contractAddress, alertType])
+  @@index([detectedAt])
+}
+
+model HolderCohort {
+  id              String   @id @default(cuid())
+  contractAddress String
+  cohortPeriod    String
+  cohortStart     DateTime
+  initialHolders  Int
+  retainedAt30d   Int?
+  retainedAt60d   Int?
+  retainedAt90d   Int?
+  avgHoldTime     Float?
+  computedAt      DateTime @default(now())
+
+  @@index([contractAddress, cohortPeriod])
+}
