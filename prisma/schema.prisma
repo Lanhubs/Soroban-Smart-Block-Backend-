@@ -3941,3 +3941,55 @@ model OAuthCode {
   @@index([userId])
   @@map("oauth_codes")
 }
+
+// ── Universal ABI Extraction (#289) ──────────────────────────────────────────
+
+model WasmAbiExtract {
+  id              String   @id @default(cuid())
+  contractAddress String   @unique
+  source          String   // on-chain-spec | inferred | sep-matched | generic | manual
+  functions       Json     // ExtractedFunction[]
+  exports         Json     // WasmExport[]
+  imports         Json     // WasmImport[]
+  sepStandards    String[]
+  coverageScore   Float    @default(0)
+  warnings        String[]
+  wasmHash        String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([contractAddress])
+  @@index([source])
+  @@map("wasm_abi_extracts")
+}
+
+model AbiCoverageReport {
+  id                   String   @id @default(cuid())
+  contractAddress      String
+  totalCalls           Int
+  matchedCalls         Int
+  coveragePercent      Float
+  falsePositives       String[]
+  falseNegatives       String[]
+  confidenceByFunction Json
+  createdAt            DateTime @default(now())
+
+  @@index([contractAddress])
+  @@index([createdAt])
+  @@map("abi_coverage_reports")
+}
+
+model AbiCommunityContribution {
+  id           String   @id @default(cuid())
+  address      String
+  functionName String
+  params       Json
+  returns      String
+  contributor  String?
+  approved     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  @@index([address])
+  @@map("abi_community_contributions")
+}
+
