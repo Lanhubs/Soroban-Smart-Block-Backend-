@@ -1,6 +1,8 @@
 import type { GraphQLContext } from './context';
 
 const MAX_LIMIT = 100;
+const DEFAULT_PAGE_LIMIT = 20;
+const DEFAULT_LIST_LIMIT = 50;
 
 interface PageArgs {
   cursor?: string | null;
@@ -33,7 +35,7 @@ async function paginateTransactions(
   args: PageArgs,
   orderBy: Record<string, string>[] = [{ ledgerSequence: 'desc' }, { id: 'desc' }],
 ) {
-  const limit = clampLimit(args.limit, 20);
+  const limit = clampLimit(args.limit, DEFAULT_PAGE_LIMIT);
 
   let finalWhere: Record<string, unknown> = where;
   if (args.cursor) {
@@ -68,7 +70,7 @@ async function paginateTransactions(
 }
 
 async function paginateEvents(ctx: GraphQLContext, where: Record<string, unknown>, args: PageArgs) {
-  const limit = clampLimit(args.limit, 20);
+  const limit = clampLimit(args.limit, DEFAULT_PAGE_LIMIT);
 
   let finalWhere: Record<string, unknown> = where;
   if (args.cursor) {
@@ -201,7 +203,7 @@ export const resolvers = {
       return ctx.loaders.contractByAddress.load(parent.address);
     },
     async transfers(parent: any, args: { limit?: number }, ctx: GraphQLContext) {
-      const limit = clampLimit(args.limit, 50);
+      const limit = clampLimit(args.limit, DEFAULT_LIST_LIMIT);
       return ctx.prisma.event.findMany({
         where: { contractAddress: parent.address, eventType: 'transfer' },
         orderBy: { ledgerSequence: 'desc' },
@@ -246,7 +248,7 @@ export const resolvers = {
       );
     },
     async contracts(parent: { address: string }, args: { limit?: number }, ctx: GraphQLContext) {
-      const limit = clampLimit(args.limit, 50);
+      const limit = clampLimit(args.limit, DEFAULT_LIST_LIMIT);
       return ctx.prisma.contract.findMany({
         where: { transactions: { some: { sourceAccount: parent.address } } },
         take: limit,
@@ -306,7 +308,7 @@ export const resolvers = {
       return ctx.loaders.contractByAddress.load(args.address);
     },
     async contracts(_parent: unknown, args: { limit?: number }, ctx: GraphQLContext) {
-      const limit = clampLimit(args.limit, 50);
+      const limit = clampLimit(args.limit, DEFAULT_LIST_LIMIT);
       return ctx.prisma.contract.findMany({
         take: limit,
         orderBy: { createdAt: 'desc' },
@@ -330,7 +332,7 @@ export const resolvers = {
       args: { cursor?: string; limit?: number },
       ctx: GraphQLContext,
     ) {
-      const limit = clampLimit(args.limit, 20);
+      const limit = clampLimit(args.limit, DEFAULT_PAGE_LIMIT);
 
       const contracts = await ctx.prisma.contract.findMany({
         where: { isToken: true },
