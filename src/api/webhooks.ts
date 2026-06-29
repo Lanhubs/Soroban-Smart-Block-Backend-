@@ -6,8 +6,24 @@ import { assertSafeUrl, SsrfBlockedError } from '../webhooks/ssrf-guard';
 
 export const webhooksRouter = Router();
 
+const isAllowedUrl = (raw: string): boolean => {
+  try {
+    const parsed = new URL(raw);
+    const isLocal =
+      parsed.hostname === 'localhost' ||
+      parsed.hostname === '127.0.0.1' ||
+      parsed.hostname === '::1';
+    return parsed.protocol === 'https:' || (isLocal && process.env.NODE_ENV !== 'production');
+  } catch {
+    return false;
+  }
+};
+
 const createSchema = z.object({
-  url: z.string().url(),
+  url: z
+    .string()
+    .url()
+    .refine(isAllowedUrl, { message: 'Webhook URL must use HTTPS' }),
   secret: z.string().min(8).optional(),
   contractAddress: z.string().optional(),
   eventType: z.string().optional(),

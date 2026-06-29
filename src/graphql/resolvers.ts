@@ -1,3 +1,4 @@
+import { GraphQLError } from 'graphql';
 import type { GraphQLContext } from './context';
 
 interface PageArgs {
@@ -53,6 +54,32 @@ async function paginateEvents(ctx: GraphQLContext, where: Record<string, unknown
   return { data, hasNext, nextCursor: nextCursor != null ? String(nextCursor) : null };
 }
 
+function parseJsonLiteral(ast: any, variables?: Record<string, unknown>): unknown {
+  switch (ast.kind) {
+    case 'StringValue':
+      return ast.value;
+    case 'IntValue':
+      return parseInt(ast.value, 10);
+    case 'FloatValue':
+      return parseFloat(ast.value);
+    case 'BooleanValue':
+      return ast.value;
+    case 'NullValue':
+      return null;
+    case 'ListValue':
+      return ast.values.map((v: any) => parseJsonLiteral(v, variables));
+    case 'ObjectValue':
+      return ast.fields.reduce((obj: Record<string, unknown>, field: any) => {
+        obj[field.name.value] = parseJsonLiteral(field.value, variables);
+        return obj;
+      }, {});
+    case 'Variable':
+      return variables ? variables[ast.name.value] : undefined;
+    default:
+      throw new GraphQLError(`JSON scalar does not support literal kind: ${ast.kind}`);
+  }
+}
+
 export const resolvers = {
   DateTime: {
     __serialize(value: unknown) {
@@ -75,12 +102,8 @@ export const resolvers = {
     __parseValue(value: unknown) {
       return value;
     },
-    __parseLiteral(ast: any) {
-      try {
-        return JSON.parse(ast.value);
-      } catch {
-        return null;
-      }
+    __parseLiteral(ast: any, variables?: Record<string, unknown>): unknown {
+      return parseJsonLiteral(ast, variables);
     },
   },
 

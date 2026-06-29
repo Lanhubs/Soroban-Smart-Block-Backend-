@@ -8,16 +8,34 @@ import { redactSensitiveData } from '../../webhooks/redaction';
 
 export const devWebhooksRouter = Router();
 
+const isAllowedUrl = (raw: string): boolean => {
+  try {
+    const parsed = new URL(raw);
+    const isLocal =
+      parsed.hostname === 'localhost' ||
+      parsed.hostname === '127.0.0.1' ||
+      parsed.hostname === '::1';
+    return parsed.protocol === 'https:' || (isLocal && process.env.NODE_ENV !== 'production');
+  } catch {
+    return false;
+  }
+};
+
+const httpsUrl = z
+  .string()
+  .url()
+  .refine(isAllowedUrl, { message: 'Webhook URL must use HTTPS' });
+
 const createWebhookSchema = z.object({
   developerId: z.string(),
-  url: z.string().url(),
+  url: httpsUrl,
   events: z.array(z.string()).min(1),
   retryPolicy: z.object({ maxRetries: z.number().int(), backoffMs: z.number().int() }).optional(),
   headers: z.record(z.string()).optional(),
 });
 
 const updateWebhookSchema = z.object({
-  url: z.string().url().optional(),
+  url: httpsUrl.optional(),
   events: z.array(z.string()).optional(),
   active: z.boolean().optional(),
   retryPolicy: z.object({ maxRetries: z.number().int(), backoffMs: z.number().int() }).optional(),
