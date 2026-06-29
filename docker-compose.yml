@@ -75,12 +75,27 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    ports:
-      - '6379:6379'
+    # No host-port mapping — Redis is reachable only on the internal Compose network.
+    # Set REDIS_PASSWORD in the host environment to enable requirepass authentication.
+    command: >-
+      sh -c 'if [ -n "$$REDIS_PASSWORD" ]; then
+        exec redis-server --requirepass "$$REDIS_PASSWORD";
+      else
+        exec redis-server;
+      fi'
+    environment:
+      REDIS_PASSWORD: '${REDIS_PASSWORD:-}'
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
+      test:
+        - CMD-SHELL
+        - >-
+          if [ -n "$$REDIS_PASSWORD" ]; then
+            redis-cli -a "$$REDIS_PASSWORD" ping;
+          else
+            redis-cli ping;
+          fi
       interval: 5s
       timeout: 5s
       retries: 5
