@@ -2880,8 +2880,9 @@ model WebhookDelivery {
 
 model WebhookSubscription {
   id              String    @id @default(cuid())
+  apiKeyId        String
   url             String
-  secret          String?
+  secret          String
   contractAddress String?
   eventType       String?
   topicSymbol     String?
@@ -2892,6 +2893,8 @@ model WebhookSubscription {
   updatedAt       DateTime @updatedAt
 
   delivery WebhookDelivery[]
+
+  @@index([apiKeyId])
 }
 
 model YieldDistribution {

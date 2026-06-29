@@ -108,3 +108,8 @@ router.use('/admin', adminRouter);
 // ── Universal ABI Extraction (#289) ──────────────────────────────────────────
 import { abiExtractRouter } from './abi-extract';
 router.use('/abi-extract', abiExtractRouter);
+
+// ── Webhook Subscriptions (#478 #481 #482 #483) ───────────────────────────────
+// Auth and owner-scoping are enforced inside webhooksRouter itself.
+import { webhooksRouter } from './webhooks';
+router.use('/webhooks', webhooksRouter);
