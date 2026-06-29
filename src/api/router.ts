@@ -39,13 +39,19 @@ import { dataMarketRouter } from './data-market';
 import { marketRouter } from './market';
 import { tokenPricesRouter } from './token-prices';
 import { portfolioRouter } from './portfolio';
+import { exportsRouter } from './exports';
+import { rateLimitAdminRouter } from './rate-limits';
 import { alertsRouter } from './alerts';
 import { oracleIntelligenceRouter } from './oracle-intelligence';
 
 // ── Admin ─────────────────────────────────────────────────────────────────────
 import { adminErrorsRouter } from './admin/errors';
 // ── CSV Exports ───────────────────────────────────────────────────────────────
-import { requireApiKey } from '../middleware/apiKeyAuth';
+import { requireApiKey, requireKeyTier } from '../middleware/apiKeyAuth';
+import { compilerRouter } from './compiler-router';
+
+// ── MEV / Sandwich Detection (#290) ──────────────────────────────────────────
+import { sandwichRouter } from './sandwich';
 
 // ── Freeze Management ─────────────────────────────────────────────────────────
 
@@ -80,6 +86,8 @@ router.use('/compliance', requireApiKey, complianceRouter);
 router.use('/token-prices', tokenPricesRouter);
 router.use('/market', marketRouter);
 router.use('/portfolio', portfolioRouter);
+router.use('/exports', exportsRouter);
+router.use('/admin/rate-limits', rateLimitAdminRouter);
 router.use('/market/alerts', alertsRouter);
 router.use('/oracles/intelligence', oracleIntelligenceRouter);
 
@@ -108,3 +116,8 @@ router.use('/admin', adminRouter);
 // ── Universal ABI Extraction (#289) ──────────────────────────────────────────
 import { abiExtractRouter } from './abi-extract';
 router.use('/abi-extract', abiExtractRouter);
+
+// ── Webhook Subscriptions (#478 #481 #482 #483) ───────────────────────────────
+// Auth and owner-scoping are enforced inside webhooksRouter itself.
+import { webhooksRouter } from './webhooks';
+router.use('/webhooks', webhooksRouter);

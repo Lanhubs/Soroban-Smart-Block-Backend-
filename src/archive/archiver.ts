@@ -1,4 +1,4 @@
-import { prisma } from '../db';
+import { prismaWrite as prisma } from '../db';
 import { decodeScValXdr } from './scval-decoder';
 
 export type StateOperation = 'create' | 'update' | 'delete';
@@ -21,9 +21,9 @@ function safeDecodeXdr(base64: string): string {
 }
 
 // Placeholder: used by future ledger-entry polling
-async function fetchLedgerEntries(_contractAddress: string): Promise<
-  { key: string; value: string }[]
-> {
+async function fetchLedgerEntries(
+  _contractAddress: string,
+): Promise<{ key: string; value: string }[]> {
   return [];
 }
 
@@ -57,8 +57,11 @@ export async function captureStateChangesForTransaction(
 ): Promise<number> {
   let saved = 0;
   for (const change of stateChanges) {
-    const operation: StateOperation =
-      !change.before ? 'create' : !change.after ? 'delete' : 'update';
+    const operation: StateOperation = !change.before
+      ? 'create'
+      : !change.after
+        ? 'delete'
+        : 'update';
 
     const keyHuman = change.key ? safeDecodeXdr(change.key) : undefined;
     const valueHuman = change.after ? safeDecodeXdr(change.after) : undefined;

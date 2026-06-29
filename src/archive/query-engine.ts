@@ -1,9 +1,14 @@
-import { prisma } from '../db';
+import { prismaRead as prisma } from '../db';
 
 export interface StateAtLedger {
   contractAddress: string;
   ledger: number;
-  entries: { key: string; keyHuman: string | null; value: string | null; valueHuman: string | null }[];
+  entries: {
+    key: string;
+    keyHuman: string | null;
+    value: string | null;
+    valueHuman: string | null;
+  }[];
   totalKeys: number;
 }
 
@@ -26,7 +31,12 @@ export interface LedgerDiff {
   fromLedger: number;
   toLedger: number;
   added: { key: string; keyHuman: string | null; value: string | null }[];
-  updated: { key: string; keyHuman: string | null; valueBefore: string | null; valueAfter: string | null }[];
+  updated: {
+    key: string;
+    keyHuman: string | null;
+    valueBefore: string | null;
+    valueAfter: string | null;
+  }[];
   deleted: { key: string; keyHuman: string | null }[];
 }
 
@@ -48,16 +58,19 @@ export async function getStateAtLedger(
 
   const keyList = allKeys.map((k) => k.storageKey);
   const search = options.search?.toLowerCase();
-  const filteredKeys = search
-    ? keyList.filter((k) => k.toLowerCase().includes(search))
-    : keyList;
+  const filteredKeys = search ? keyList.filter((k) => k.toLowerCase().includes(search)) : keyList;
 
   const pageKeys = filteredKeys.slice(skip, skip + pageSize);
 
   const entries = await Promise.all(
     pageKeys.map(async (key) => {
       const latest = await prisma.contractStateChange.findFirst({
-        where: { contractAddress, storageKey: key, ledger: { lte: ledger }, operation: { not: 'delete' } },
+        where: {
+          contractAddress,
+          storageKey: key,
+          ledger: { lte: ledger },
+          operation: { not: 'delete' },
+        },
         orderBy: { ledger: 'desc' },
         select: { storageKey: true, storageKeyHuman: true, valueAfter: true, valueHuman: true },
       });
@@ -108,11 +121,24 @@ export async function getLedgerDiff(
     orderBy: [{ storageKey: 'asc' }, { ledger: 'asc' }],
   });
 
-  const keyMap = new Map<string, { firstBefore: string | null; lastAfter: string | null; lastOp: string; keyHuman: string | null }>();
+  const keyMap = new Map<
+    string,
+    {
+      firstBefore: string | null;
+      lastAfter: string | null;
+      lastOp: string;
+      keyHuman: string | null;
+    }
+  >();
 
   for (const c of changes) {
     if (!keyMap.has(c.storageKey)) {
-      keyMap.set(c.storageKey, { firstBefore: c.valueBefore, lastAfter: c.valueAfter, lastOp: c.operation, keyHuman: c.storageKeyHuman });
+      keyMap.set(c.storageKey, {
+        firstBefore: c.valueBefore,
+        lastAfter: c.valueAfter,
+        lastOp: c.operation,
+        keyHuman: c.storageKeyHuman,
+      });
     } else {
       const existing = keyMap.get(c.storageKey)!;
       existing.lastAfter = c.valueAfter;
@@ -130,7 +156,12 @@ export async function getLedgerDiff(
     } else if (info.lastOp === 'delete') {
       deleted.push({ key, keyHuman: info.keyHuman });
     } else {
-      updated.push({ key, keyHuman: info.keyHuman, valueBefore: info.firstBefore, valueAfter: info.lastAfter });
+      updated.push({
+        key,
+        keyHuman: info.keyHuman,
+        valueBefore: info.firstBefore,
+        valueAfter: info.lastAfter,
+      });
     }
   }
 
@@ -140,7 +171,12 @@ export async function getLedgerDiff(
 export async function getFullSnapshot(
   contractAddress: string,
   ledger: number,
-): Promise<{ contractAddress: string; ledger: number; snapshot: Record<string, string | null>; snapshotHuman: Record<string, string | null> }> {
+): Promise<{
+  contractAddress: string;
+  ledger: number;
+  snapshot: Record<string, string | null>;
+  snapshotHuman: Record<string, string | null>;
+}> {
   const state = await getStateAtLedger(contractAddress, ledger, { pageSize: 1000 });
   const snapshot: Record<string, string | null> = {};
   const snapshotHuman: Record<string, string | null> = {};

@@ -14,9 +14,9 @@ import { prismaWrite as prisma, prismaRead } from './db';
 import { startIndexerService, stopIndexerService } from './indexer/indexer';
 import { tieredRateLimit, initRateLimitStore } from './middleware/rateLimit';
 import { metricsMiddleware } from './middleware/metricsMiddleware';
-import { sanitizeInputs } from './middleware/sanitize';
+import { sanitizeInputs, requestSizeGuard } from './middleware/sanitize';
 import { i18nMiddleware } from './i18n';
-import { registry, dbConnectionStatus } from './metrics';
+import { registry, dbConnectionStatus, cacheBackendStatus } from './metrics';
 import { replicaGuard } from './middleware/replicaGuard';
 import { coldStorageRouter, initializeColdStorage } from './middleware/coldStorageRouter';
 import { networkRouter } from './middleware/networkRouter';
@@ -25,36 +25,38 @@ import { attachWebSocketServer, shutdownWebSocketServer } from './ws/eventBroadc
 import { attachPrivacyWebSocket as attachPrivacyWebSocketReal } from './ws/privacyBroadcaster';
 import yogaHandler from './graphql';
 import { warmTokenMetadataCache } from './indexer/token-metadata';
-import { cacheConnect, cacheClose, isCacheReady } from './cache';
+import { cacheConnect, cacheClose, isCacheReady, cacheBackendType } from './cache';
 import { markReady, markNotReady, getReadinessState, isFullyReady } from './readiness';
 import { errorHandler } from './middleware/errorHandler';
 import { requestContext } from './middleware/requestContext';
 import { apiKeyAuth } from './middleware/apiKeyAuth';
 import { auditLogMiddleware } from './middleware/auditLog';
-import { adminApiKeysRouter } from './api/admin/api-keys';
-import { billingRouter } from './api/billing';
+import { asyncHandler } from './middleware/asyncHandler';
+import { rejectUntrustedForwardedHeaders } from './middleware/proxyTrust';
+import { billingRouter } from './services/stripe-billing';
 import { logger } from './logger';
 import { feedOrchestrator } from './feed/orchestrator';
 import { startPriceUpdater, stopPriceUpdater } from './services/pricing';
 import { startBridgeWorker, stopBridgeWorker } from './bridge-tracker';
 import { writeFile, mkdir } from 'fs/promises';
 import { resolve } from 'path';
-import { apiKeyAuth } from './middleware/apiKeyAuth';
-import { auditLogMiddleware } from './middleware/auditLog';
-import { asyncHandler } from './middleware/asyncHandler';
-import { rejectUntrustedForwardedHeaders } from './middleware/proxyTrust';
-import { billingRouter } from './services/stripe-billing';
+import { getIndexerStatus } from './indexer-state';
 import { startArbitrageScanner as startArbitrageScannerImpl } from './indexer/arbitrage-scanner';
 import { startPoolPriceMonitor as startPoolPriceMonitorImpl } from './indexer/pool-price-monitor';
 import { startFeeAggregator as startFeeAggregatorImpl } from './indexer/fee-aggregator';
 import { attachArbitrageWebSocket as attachArbitrageWebSocketImpl } from './ws/arbitrageBroadcaster';
 import { attachComposabilityWebSocket as attachComposabilityWebSocketImpl } from './ws/composabilityBroadcaster';
+import { getHealthStatus, getLivenessStatus, getReadinessStatus } from './health';
+import { getIndexerStatus } from './indexer-state';
 
 let isShuttingDown = false;
+const SERVICE_START_TIME = Date.now();
 let wssRef: ReturnType<typeof attachWebSocketServer> | null = null;
 
 const SHUTDOWN_TIMEOUT_MS = parseInt(process.env.SHUTDOWN_TIMEOUT_MS ?? '30000');
-const STATE_DUMP_PATH = process.env.STATE_DUMP_PATH ?? './data/state';
+// Default to /tmp/state so the path is writable in read-only container filesystems.
+// /tmp is already mounted as a tmpfs in the Compose security profile.
+const STATE_DUMP_PATH = process.env.STATE_DUMP_PATH ?? '/tmp/state';
 
 // Feature flags — set env var to 'true' to enable each optional service.
 const ENABLE_PRIVACY_WS = process.env.ENABLE_PRIVACY_WS === 'true';
@@ -71,7 +73,47 @@ const app = express();
 app.set('trust proxy', config.trustProxy);
 app.use(rejectUntrustedForwardedHeaders);
 
-app.use(helmet({ contentSecurityPolicy: false }));
+// ── Security Headers (Issue #274) ─────────────────────────────────────────────
+// Helmet provides HSTS, X-Frame-Options, X-Content-Type-Options, and more.
+app.use(
+  helmet({
+    // Content-Security-Policy: restrict resource origins, block inline execution
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:', 'https:'],
+        connectSrc: ["'self'"],
+        fontSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        mediaSrc: ["'none'"],
+        frameSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+        formAction: ["'self'"],
+        upgradeInsecureRequests: [],
+      },
+    },
+    // HTTP Strict Transport Security: 1 year, include subdomains
+    hsts: {
+      maxAge: 31536000,
+      includeSubDomains: true,
+      preload: true,
+    },
+    // Prevents MIME-type sniffing
+    noSniff: true,
+    // Denies framing — defence against clickjacking
+    frameguard: { action: 'deny' },
+    // Referrer policy: only send origin on same-origin requests
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+    // Remove X-Powered-By
+    hidePoweredBy: true,
+    // XSS filter (legacy browsers)
+    xssFilter: true,
+    // Prevent IE from opening downloads in-site
+    ieNoOpen: true,
+  }),
+);
 
 // Build an origin allowlist from CORS_ALLOWED_ORIGINS (comma-separated URLs).
 // Production requires an explicit list; other envs fall back to '*'.
@@ -90,13 +132,18 @@ app.use(
     credentials: true,
   }),
 );
+
 // Correlation IDs first — requestId is needed by morgan token and logger.
 app.use(correlationMiddleware);
 morgan.token('request-id', (req) => (req as express.Request).requestId ?? '-');
 app.use(
   morgan(':method :url :status :res[content-length] - :response-time ms request-id=:request-id'),
 );
-app.use(express.json());
+
+// Request size guard before body parsing (Issue #274)
+app.use(requestSizeGuard(1_048_576)); // 1 MB
+
+app.use(express.json({ limit: '1mb' }));
 app.use(networkRouter);
 
 // Request context FIRST (generates requestId + start time for correlation)
@@ -136,25 +183,49 @@ app.get(
   }),
 );
 
-app.get('/health', (_req, res) => {
+// Health endpoint with dependency status
+app.get(
+  '/health',
+  asyncHandler(async (_req, res) => {
+    if (isShuttingDown) {
+      return res.status(503).json({ status: 'shutting_down', timestamp: new Date().toISOString() });
+    }
+
+    const healthStatus = await getHealthStatus();
+
+    // Return 503 if any dependency is unhealthy, 200 otherwise
+    const statusCode = healthStatus.status === 'unhealthy' ? 503 : 200;
+
+    res.status(statusCode).json({
+      ...healthStatus,
+      network: config.stellarNetwork,
+    });
+  }),
+);
+
+// Liveness probe - basic check that service is alive
+app.get('/livez', (_req, res) => {
   if (isShuttingDown) {
-    return res.status(503).json({ status: 'shutting_down' });
+    return res.status(503).json({ status: 'dead', reason: 'shutting_down' });
   }
-  res.json({ status: 'ok', network: config.stellarNetwork });
+
+  const liveness = getLivenessStatus(SERVICE_START_TIME);
+  res.json(liveness);
 });
 
+// Readiness probe - detailed check if service can handle traffic
 app.get('/readyz', (_req, res) => {
   if (isShuttingDown) {
     return res.status(503).json({ status: 'not_ready', reason: 'shutting_down' });
   }
-  const dependencies = getReadinessState();
-  if (!isFullyReady()) {
-    return res.status(503).json({ status: 'not_ready', dependencies });
-  }
-  res.json({ status: 'ready', dependencies });
+
+  const readinessStatus = getReadinessStatus();
+  const statusCode = readinessStatus.status === 'ready' ? 200 : 503;
+
+  res.status(statusCode).json(readinessStatus);
 });
 
-// Readiness probe — returns 503 when the indexer has suffered a fatal failure (#440)
+// Legacy readiness probe — returns 503 when the indexer has suffered a fatal failure (#440)
 app.get('/ready', (_req, res) => {
   const { healthy, failureReason } = getIndexerStatus();
   if (!healthy) {
@@ -225,6 +296,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
     logger.info('[shutdown] State saved');
 
     await cacheClose();
+    cacheBackendStatus.set(0);
     logger.info('[shutdown] Cache connection closed');
 
     await prismaRead.$disconnect();
@@ -255,13 +327,30 @@ function registerShutdownHandlers(): void {
   });
 }
 
+async function validateStateDumpPath(): Promise<void> {
+  try {
+    await mkdir(STATE_DUMP_PATH, { recursive: true });
+    const testFile = resolve(STATE_DUMP_PATH, '.write-test');
+    await writeFile(testFile, '');
+    const { unlink } = await import('fs/promises');
+    await unlink(testFile).catch(() => {});
+  } catch (err) {
+    logger.warn('State dump path is not writable; shutdown state will not be persisted', {
+      path: STATE_DUMP_PATH,
+      error: String(err),
+    });
+  }
+}
+
 async function main() {
   registerShutdownHandlers();
+  await validateStateDumpPath();
 
   await initRateLimitStore();
 
   await cacheConnect();
   if (isCacheReady()) markReady('cache');
+  cacheBackendStatus.set(cacheBackendType() === 'redis' ? 1 : 0);
 
   await prisma.$connect();
   dbConnectionStatus.set(1);
