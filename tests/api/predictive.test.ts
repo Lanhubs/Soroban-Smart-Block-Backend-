@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
@@ -30,8 +30,12 @@ vi.mock('../../src/db', () => ({
     featureDefinition: { findUnique: vi.fn().mockResolvedValue(null) },
   },
   prismaWrite: {
-    featureValue: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+    featureValue: {
+      createMany: vi.fn().mockResolvedValue({ count: 0 }),
+      findMany: vi.fn().mockResolvedValue([{ value: 1000 }, { value: 1050 }, { value: 980 }]),
+    },
     featureDefinition: {
+      findUnique: vi.fn().mockResolvedValue({ id: 'fd-1' }),
       upsert: vi.fn().mockImplementation((d: any) => Promise.resolve({ id: 'fd-1', ...d.create })),
     },
     predictionScenario: {
@@ -48,12 +52,16 @@ vi.mock('../../src/db', () => ({
 }));
 
 import { predictRouter } from '../../src/api/predict';
+import { resetForecasterForTests } from '../../src/predictive/factory';
 
 const app = express();
 app.use(express.json());
 app.use('/api/v1/predict', predictRouter);
 
 describe('Predictive Analytics API (/predict)', () => {
+  beforeEach(() => {
+    resetForecasterForTests();
+  });
   it('POST /forecast returns predictions array of requested length', async () => {
     const res = await request(app).post('/api/v1/predict/forecast').send({
       metric: 'tx_volume',

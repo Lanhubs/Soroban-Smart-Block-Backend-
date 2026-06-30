@@ -1239,6 +1239,7 @@ model Developer {
   apiKeys      DevApiKey[]
   webhooks     DevWebhook[]
   usageRecords UsageRecord[]
+  exportJobs   ExportJob[]
 
   @@index([email])
   @@index([planId])
@@ -2006,6 +2007,7 @@ model Endorsement {
 
 model ExportJob {
   id            String    @id @default(cuid())
+  developerId   String
   status        String
   progress      Float?
   exportType    String?
@@ -2020,6 +2022,11 @@ model ExportJob {
   processedRows Int?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+
+  developer Developer @relation(fields: [developerId], references: [id], onDelete: Cascade)
+
+  @@index([developerId])
+  @@index([developerId, createdAt])
 }
 
 model FreezeViolation {

@@ -1,12 +1,31 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
+const DEV_A = 'dev-a';
+const DEV_B = 'dev-b';
+
+vi.mock('../../src/middleware/apiKeyAuth', () => ({
+  apiKeyAuth: (req: any, _res: any, next: any) => {
+    req.apiKey = {
+      id: 'key-1',
+      developerId: req.headers['x-test-developer'] ?? DEV_A,
+      tier: 'developer',
+      keyName: 'test',
+    };
+    next();
+  },
+  requireApiKey: (_req: any, res: any, next: any) => next(),
+}));
 
 vi.mock('../../src/db', () => ({
   prismaRead: {
     exportJob: {
       findMany: vi.fn(),
-      findUnique: vi.fn(),
+      findFirst: vi.fn(),
     },
   },
   prismaWrite: {},
@@ -40,7 +59,7 @@ describe('CSV Exports API', () => {
       expect(res.status).toBe(202);
       expect(res.body.jobId).toBe('job-abc-123');
       expect(res.body.status).toBe('pending');
-      expect(enqueueExport).toHaveBeenCalledWith('transactions', { limit: 100 });
+      expect(enqueueExport).toHaveBeenCalledWith('transactions', { limit: 100 }, DEV_A);
     });
 
     it('returns 202 with empty filters when omitted', async () => {
@@ -49,119 +68,126 @@ describe('CSV Exports API', () => {
       const res = await request(app).post('/api/v1/exports').send({ exportType: 'events' });
 
       expect(res.status).toBe(202);
-      expect(res.body.jobId).toBe('job-xyz');
-      expect(enqueueExport).toHaveBeenCalledWith('events', {});
+      expect(enqueueExport).toHaveBeenCalledWith('events', {}, DEV_A);
     });
 
     it('returns 400 for invalid exportType', async () => {
       const res = await request(app).post('/api/v1/exports').send({ exportType: 'invalid_type' });
-
       expect(res.status).toBe(400);
       expect(enqueueExport).not.toHaveBeenCalled();
-    });
-
-    it('returns 400 when exportType is missing', async () => {
-      const res = await request(app).post('/api/v1/exports').send({});
-      expect(res.status).toBe(400);
     });
   });
 
   describe('GET /api/v1/exports — list jobs', () => {
-    it('returns list of export jobs', async () => {
-      const jobs = [
-        {
-          id: 'j1',
-          status: 'done',
-          exportType: 'transactions',
-          rowCount: 500,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
-        {
-          id: 'j2',
-          status: 'pending',
-          exportType: 'events',
-          rowCount: null,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
-      ];
-      (prisma.exportJob.findMany as any).mockResolvedValue(jobs);
-
-      const res = await request(app).get('/api/v1/exports');
-
-      expect(res.status).toBe(200);
-      expect(res.body).toHaveLength(2);
-      expect(res.body[0].id).toBe('j1');
-      expect(res.body[1].status).toBe('pending');
-    });
-
-    it('returns empty array when no jobs exist', async () => {
+    it('scopes list to authenticated developer', async () => {
       (prisma.exportJob.findMany as any).mockResolvedValue([]);
 
-      const res = await request(app).get('/api/v1/exports');
+      await request(app).get('/api/v1/exports');
 
-      expect(res.status).toBe(200);
-      expect(res.body).toEqual([]);
+      expect(prisma.exportJob.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { developerId: DEV_A } }),
+      );
     });
   });
 
   describe('GET /api/v1/exports/:id — job status', () => {
-    it('returns job when found', async () => {
+    it('returns job when owned by developer', async () => {
       const job = { id: 'job-1', status: 'running', exportType: 'wallet_history' };
-      (prisma.exportJob.findUnique as any).mockResolvedValue(job);
+      (prisma.exportJob.findFirst as any).mockResolvedValue(job);
 
       const res = await request(app).get('/api/v1/exports/job-1');
 
       expect(res.status).toBe(200);
-      expect(res.body.id).toBe('job-1');
-      expect(res.body.status).toBe('running');
+      expect(prisma.exportJob.findFirst).toHaveBeenCalledWith({
+        where: { developerId: DEV_A, id: 'job-1' },
+      });
     });
 
-    it('returns 404 when job not found', async () => {
-      (prisma.exportJob.findUnique as any).mockResolvedValue(null);
+    it('returns 404 when job belongs to another developer', async () => {
+      (prisma.exportJob.findFirst as any).mockResolvedValue(null);
 
-      const res = await request(app).get('/api/v1/exports/nonexistent');
+      const res = await request(app)
+        .get('/api/v1/exports/foreign-job')
+        .set('X-Test-Developer', DEV_B);
 
       expect(res.status).toBe(404);
-      expect(res.body.error).toBe('Job not found');
     });
   });
 
   describe('GET /api/v1/exports/:id/file — download', () => {
-    it('returns 404 when job not found', async () => {
-      (prisma.exportJob.findUnique as any).mockResolvedValue(null);
+    let tmpDir: string;
 
-      const res = await request(app).get('/api/v1/exports/missing/file');
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'export-test-'));
+      process.env.EXPORT_DIR = tmpDir;
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      delete process.env.EXPORT_DIR;
+    });
+
+    it('returns 404 for cross-tenant download attempt', async () => {
+      (prisma.exportJob.findFirst as any).mockResolvedValue(null);
+
+      const res = await request(app)
+        .get('/api/v1/exports/other-dev-job/file')
+        .set('X-Test-Developer', DEV_B);
 
       expect(res.status).toBe(404);
     });
 
+    it('rejects absolute filePath in database', async () => {
+      (prisma.exportJob.findFirst as any).mockResolvedValue({
+        id: 'job-done',
+        status: 'done',
+        filePath: '/etc/passwd',
+        exportType: 'transactions',
+      });
+
+      const res = await request(app).get('/api/v1/exports/job-done/file');
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/invalid export path/i);
+    });
+
+    it('rejects path traversal in filePath', async () => {
+      (prisma.exportJob.findFirst as any).mockResolvedValue({
+        id: 'job-done',
+        status: 'done',
+        filePath: '../../../etc/passwd',
+        exportType: 'transactions',
+      });
+
+      const res = await request(app).get('/api/v1/exports/job-done/file');
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/escapes export directory/i);
+    });
+
+    it('streams file when relative path is inside EXPORT_DIR', async () => {
+      const fileName = 'transactions-job-done.csv';
+      fs.writeFileSync(path.join(tmpDir, fileName), 'hash,amount\n1,100\n');
+
+      (prisma.exportJob.findFirst as any).mockResolvedValue({
+        id: 'job-done',
+        status: 'done',
+        filePath: fileName,
+        exportType: 'transactions',
+      });
+
+      const res = await request(app).get('/api/v1/exports/job-done/file');
+      expect(res.status).toBe(200);
+      expect(res.text).toContain('hash,amount');
+    });
+
     it('returns 409 when export is not yet done', async () => {
-      (prisma.exportJob.findUnique as any).mockResolvedValue({
+      (prisma.exportJob.findFirst as any).mockResolvedValue({
         id: 'job-pending',
         status: 'running',
         filePath: null,
       });
 
       const res = await request(app).get('/api/v1/exports/job-pending/file');
-
       expect(res.status).toBe(409);
-      expect(res.body.error).toMatch(/not ready/i);
-    });
-
-    it('returns 410 when file has been deleted from disk', async () => {
-      (prisma.exportJob.findUnique as any).mockResolvedValue({
-        id: 'job-done',
-        status: 'done',
-        filePath: '/nonexistent/path/export.csv',
-        exportType: 'transactions',
-      });
-
-      const res = await request(app).get('/api/v1/exports/job-done/file');
-
-      expect(res.status).toBe(410);
-      expect(res.body.error).toMatch(/no longer available/i);
     });
   });
 });

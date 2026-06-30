@@ -187,7 +187,7 @@ export const config = {
 
   // ── Rate limiting ─────────────────────────────────────────────────────────
   rateLimitWindowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS ?? '60000'),
-  rateLimitMax:      parseInt(process.env.RATE_LIMIT_MAX        ?? '100'),
+  rateLimitMax: parseInt(process.env.RATE_LIMIT_MAX ?? '100'),
   rateLimitPublicMax: parseInt(process.env.RATE_LIMIT_PUBLIC_MAX ?? '100'),
   rateLimitDeveloperMax: parseInt(process.env.RATE_LIMIT_DEVELOPER_MAX ?? '300'),
   rateLimitPremiumMax: parseInt(process.env.RATE_LIMIT_PREMIUM_MAX ?? '1000'),
@@ -200,4 +200,11 @@ export const config = {
   rateLimitMax: parseInt(process.env.RATE_LIMIT_MAX ?? '100'),
   openAiApiKey: process.env.OPENAI_API_KEY ?? '',
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? '',
-};
+
+  // ── Exports ───────────────────────────────────────────────────────────────
+  exportDir: process.env.EXPORT_DIR ?? '/tmp/soroban-exports',
+
+  // ── Predictive analytics ──────────────────────────────────────────────────
+  forecastMode: process.env.FORECAST_MODE === 'production' ? 'production' : 'demo',
+  forecastSeed: parseInt(process.env.FORECAST_SEED ?? '42', 10),
+} as const;
