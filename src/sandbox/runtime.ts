@@ -3,6 +3,29 @@ import { Prisma } from '@prisma/client';
 import { StrKey } from '@stellar/stellar-sdk';
 import { config } from '../config';
 import { prismaRead, prismaWrite } from '../db';
+import { estimateTemplateCall } from './gas-model';
+import { buildCallMetrics, serializeMetrics } from './meter';
+import { replayMainnet as replayMainnetOracle } from './replay-oracle';
+
+/**
+ * SANDBOX IMPLEMENTATION NOTE
+ *
+ * This module implements a deterministic transactional state simulator for Soroban contracts.
+ * It is NOT a WebAssembly JIT sandbox. It does not execute WASM bytecode.
+ *
+ * - Contract execution is dispatched by templateId to hardcoded TypeScript logic in executeTemplateFunction().
+ * - The wasmBase64 fields in defaultTemplates are minimal valid WASM module headers (magic + version)
+ *   that are hashed for identification but NEVER EXECUTED.
+ * - Gas metering uses a fixed formula (see gas-model.ts) that approximates Soroban costs but does not
+ *   match mainnet within 1%. The acceptance criterion "JIT sandbox matches Soroban mainnet gas within 1%"
+ *   is NOT MET by this implementation. See docs/sandbox-jit-design.md for the target JIT architecture.
+ * - Deterministic replay of mainnet transactions (replayMainnet) is simulated against the JS template
+ *   engine and returns { equal: false, reason: 'sandbox substrate is not a WASM runtime' }.
+ * - The sandbox router (src/api/sandbox.ts) is exported but NOT MOUNTED in router.ts.
+ *
+ * For the design of a real WASM JIT sandbox with tiered compilation, precise gas metering, and
+ * mainnet replay parity, see docs/sandbox-jit-design.md.
+ */
 
 type DecimalString = string;
 
@@ -836,13 +859,16 @@ function executeTemplateFunction(
 
   const after = clone(next);
   const success = error === null;
+  const estimate = estimateTemplateCall(contract.templateId ?? 'generic', Object.keys(args).length);
+  const cpuInsnUsed = estimate.cpu + (success ? 0 : 500);
+  const memBytesUsed = estimate.mem + JSON.stringify(after).length - 1024;
   return {
     success,
     result,
     error,
     events,
-    cpuInsnUsed: 1500 + Object.keys(args).length * 250 + (success ? 0 : 500),
-    memBytesUsed: 1024 + JSON.stringify(after).length,
+    cpuInsnUsed,
+    memBytesUsed,
     readBytes: JSON.stringify(before).length,
     writeBytes: JSON.stringify(after).length,
     trace: traceTemplateStep(contract.contractId, functionName, before, after),
@@ -1321,12 +1347,14 @@ export class SandboxEngine {
           createdAt: new Date(),
         },
       });
+      const metrics = buildCallMetrics(outcome);
       return {
         callId: call.id,
         ...serializeCallResult(outcome),
         trace: outcome.trace,
         stateBefore: before,
         stateAfter: before,
+        metrics: serializeMetrics(metrics),
       };
     }
 
@@ -1788,18 +1816,7 @@ export class SandboxEngine {
   }
 
   async replayMainnet(txHash: string): Promise<any> {
-    return {
-      txHash,
-      steps: [
-        { action: 'load_transaction' },
-        { action: 'simulate_execution' },
-        { action: 'compare_state' },
-      ],
-      comparison: {
-        equal: false,
-        note: 'mainnet replay is scaffolded against live RPC integration',
-      },
-    };
+    return replayMainnetOracle(txHash);
   }
 
   async forkContract(sessionId: string, contractAddress: string): Promise<any> {
