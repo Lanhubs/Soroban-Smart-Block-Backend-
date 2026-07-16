@@ -33,6 +33,7 @@ export function supportedModels(): VotingModel[] {
 export * from './types';
 export * from './proposal-lifecycle';
 export * from './delegation';
+export * from './treasury';
 export { TokenWeightedStrategy } from './strategies/token-weighted';
 export { QuadraticStrategy, DEFAULT_VOICE_CREDITS } from './strategies/quadratic';
 export {
