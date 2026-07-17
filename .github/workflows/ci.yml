@@ -56,3 +56,26 @@ jobs:
       - run: npm test
 
       - run: npm run build
+
+      - name: Verify Specification Compilation
+        run: npx ts-node -e "
+          const { SpecCompiler, spec, invariant, eq, intVar } = require('./src/verification');
+          const compiler = new SpecCompiler({ produceProofs: true });
+          const result = compiler.compile(spec('ci_check', 'test', [
+            invariant('test_inv', eq(intVar('a'), intVar('b')))
+          ]));
+          console.log('Spec compilation OK,', result.propertyMapping.length, 'properties');
+        "
+
+      - name: Check SMT Solvers Available
+        run: |
+          echo "Z3: $(which z3 2>/dev/null && z3 --version || echo 'NOT FOUND')"
+          echo "CVC5: $(which cvc5 2>/dev/null && cvc5 --version || echo 'NOT FOUND')"
+        continue-on-error: true
+
+      - name: Verify Verification Module Loads
+        run: npx ts-node -e "
+          const v = require('./src/verification');
+          console.log('Verification module loaded:', Object.keys(v).length, 'exports');
+          console.log('Exports:', Object.keys(v).join(', '));
+        "

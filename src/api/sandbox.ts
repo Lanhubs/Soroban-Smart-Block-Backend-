@@ -604,6 +604,46 @@ sandboxRouter.post('/verify/assertion', async (req, res) => {
   }
 });
 
+sandboxRouter.post('/verify/full', async (req, res) => {
+  try {
+    const sessionId = z.string().min(1).parse(req.body.sessionId);
+    const contractId = z.string().min(1).parse(req.body.contractId);
+    res.json(await sandboxEngine.verifyFull(sessionId, contractId));
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+sandboxRouter.post('/verify/reentrancy', async (req, res) => {
+  try {
+    const sessionId = z.string().min(1).parse(req.body.sessionId);
+    const contractId = z.string().min(1).parse(req.body.contractId);
+    res.json(await sandboxEngine.verifyReentrancy(sessionId, contractId));
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+sandboxRouter.post('/verify/gas', async (req, res) => {
+  try {
+    const sessionId = z.string().min(1).parse(req.body.sessionId);
+    const contractId = z.string().min(1).parse(req.body.contractId);
+    res.json(await sandboxEngine.verifyGas(sessionId, contractId));
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+sandboxRouter.post('/spec/generate', async (req, res) => {
+  try {
+    const sessionId = z.string().min(1).parse(req.body.sessionId);
+    const contractId = z.string().min(1).parse(req.body.contractId);
+    res.json(await sandboxEngine.generateSpecification(sessionId, contractId));
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
 sandboxRouter.post('/generate/sdk', async (req, res) => {
   try {
     const sessionId = z.string().min(1).parse(req.body.sessionId);

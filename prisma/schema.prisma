@@ -34,14 +34,42 @@ model Contract {
   tokenDecimals      Int?
   wasmHash           String?
   isVerified         Boolean  @default(false)
+
+  verificationBadge  String?                    // gold | silver | bronze | null
+  lastVerifiedAt     DateTime?
+  safetyScore        Int?
+  verifiedProperties Int       @default(0)
+  totalProperties    Int       @default(0)
+  vulnerabilities    Json?
+
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
   transactions Transaction[]
   events       Event[]
   wasmUpgrades WasmUpgradeHistory[]
+  verificationRuns VerificationRun[]
 
   @@index([address])
+  @@index([verificationBadge])
+  @@index([safetyScore])
+}
+
+model VerificationRun {
+  id              String   @id @default(cuid())
+  contractAddress String
+  contract        Contract @relation(fields: [contractAddress], references: [address])
+  status          String   @default("pending")  // pending | running | completed | failed
+  badge           String?                       // gold | silver | bronze
+  safetyScore     Int?
+  report          Json?
+  startedAt       DateTime @default(now())
+  completedAt     DateTime?
+  createdAt       DateTime @default(now())
+
+  @@index([contractAddress])
+  @@index([status])
+  @@index([safetyScore])
 }
 
 model WasmUpgradeHistory {
