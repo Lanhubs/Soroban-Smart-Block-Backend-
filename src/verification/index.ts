@@ -7,6 +7,8 @@ export * from './reentrancy-analyzer';
 export * from './gas-analyzer';
 export * from './verifier';
 export * from './badge-system';
+export * from './exploit-trace-generator';
+export * from './wasm-cfg-extractor';
 
 import { createSolver } from './smt-solver';
 import { createVerifier } from './verifier';

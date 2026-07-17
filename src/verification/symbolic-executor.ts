@@ -22,6 +22,8 @@ import {
   ge,
   not_,
   ite_,
+  and_,
+  or_,
 } from './dsl';
 
 export type WasmType = 'i32' | 'i64' | 'f32' | 'f64';
@@ -99,6 +101,9 @@ export interface ExecutorOptions {
   loopUnrollBound: number;
   abstractionRefinement: boolean;
   concolicTesting: boolean;
+  pathMerging: boolean;
+  invariantInference: boolean;
+  cegarMaxIterations: number;
 }
 
 export interface ExecutionState {
@@ -121,7 +126,14 @@ export interface ExecutionPath {
   state: ExecutionState;
   constraints: PathConstraint[];
   result?: SymbolicValue;
-  terminated: 'return' | 'panic' | 'assert_fail' | 'overflow' | 'div_by_zero' | 'unreachable';
+  terminated:
+    | 'return'
+    | 'panic'
+    | 'assert_fail'
+    | 'overflow'
+    | 'underflow'
+    | 'div_by_zero'
+    | 'unreachable';
   error?: string;
 }
 
@@ -152,6 +164,9 @@ export interface AnalysisResult {
   coverage: Record<string, boolean>;
   executionTimeMs: number;
   pathConstraints: string[];
+  cegarIterations: number;
+  loopInvariants: Array<{ loopLabel: string; invariant: string }>;
+  abstractPredicates: string[];
 }
 
 export interface SymbolicState {
@@ -165,6 +180,16 @@ export interface SymbolicState {
   reentrantCalls: Set<string>;
 }
 
+interface AbstractState {
+  predicates: Set<string>;
+  values: Map<string, 'top' | 'bot' | Expr>;
+}
+
+interface ConcolicValue {
+  symbolic: SymbolicValue;
+  concrete: number | bigint;
+}
+
 export class SymbolicExecutor {
   private solver: SmtSolver;
   private compiler: SpecCompiler;
@@ -172,6 +197,9 @@ export class SymbolicExecutor {
   private nextPathId: number = 0;
   private functions: Map<number, WasmFunction> = new Map();
   private symbolicMap: Map<string, SymbolicValue> = new Map();
+  private loopInvariants: Map<string, Expr> = new Map();
+  private abstractPredicates: string[] = [];
+  private cegarIteration: number = 0;
 
   constructor(solver: SmtSolver, options?: Partial<ExecutorOptions>) {
     this.solver = solver;
@@ -184,12 +212,18 @@ export class SymbolicExecutor {
       loopUnrollBound: options?.loopUnrollBound ?? 5,
       abstractionRefinement: options?.abstractionRefinement ?? true,
       concolicTesting: options?.concolicTesting ?? true,
+      pathMerging: options?.pathMerging ?? true,
+      invariantInference: options?.invariantInference ?? true,
+      cegarMaxIterations: options?.cegarMaxIterations ?? 10,
     };
   }
 
   loadContract(functions: WasmFunction[]): void {
     this.functions.clear();
     this.symbolicMap.clear();
+    this.loopInvariants.clear();
+    this.abstractPredicates = [];
+    this.cegarIteration = 0;
     for (let i = 0; i < functions.length; i++) {
       this.functions.set(i, functions[i]);
     }
@@ -219,26 +253,174 @@ export class SymbolicExecutor {
     };
 
     const allPaths: ExecutionPath[] = [];
+    let vuls: Vulnerability[] = [];
+
+    if (this.options.abstractionRefinement) {
+      const result = await this.executeWithCEGAR(funcEntry, initialState, allPaths, startTime);
+      vuls = result.vulnerabilities;
+    } else {
+      vuls = await this.executePaths(funcEntry, initialState, allPaths, startTime);
+    }
+
+    const coverage = this.computeCoverage(allPaths, funcEntry);
+    const pathConstraints = allPaths.map((p) =>
+      p.constraints.map((c) => this.compiler.compileExpr(c.condition)).join(' && '),
+    );
+
+    const loopInvariants = Array.from(this.loopInvariants.entries()).map(([label, inv]) => ({
+      loopLabel: label,
+      invariant: this.compiler.compileExpr(inv),
+    }));
+
+    return {
+      functionName: funcName,
+      pathsExplored: allPaths.length,
+      totalPaths: this.options.maxPaths,
+      vulnerabilities: vuls,
+      coverage,
+      executionTimeMs: Date.now() - startTime,
+      pathConstraints,
+      cegarIterations: this.cegarIteration,
+      loopInvariants,
+      abstractPredicates: this.abstractPredicates,
+    };
+  }
+
+  private async executeWithCEGAR(
+    func: WasmFunction,
+    initialState: ExecutionState,
+    allPaths: ExecutionPath[],
+    startTime: number,
+  ): Promise<{ vulnerabilities: Vulnerability[] }> {
+    const abstractedStates: ExecutionState[] = [this.buildAbstractState(initialState)];
+    const visitedPredicates = new Set<string>();
+    const allVulnerabilities: Vulnerability[] = [];
+
+    for (
+      this.cegarIteration = 0;
+      this.cegarIteration < this.options.cegarMaxIterations;
+      this.cegarIteration++
+    ) {
+      const paths: ExecutionPath[] = [];
+      await this.executePaths(func, abstractedStates[0], paths, startTime);
+
+      const spuriousPaths: ExecutionPath[] = [];
+
+      for (const path of paths) {
+        if (path.terminated === 'panic' || path.terminated === 'assert_fail') {
+          const feasible = await this.isPathFeasibleSmt(path);
+          if (feasible) {
+            allPaths.push(path);
+          } else {
+            spuriousPaths.push(path);
+          }
+        } else {
+          allPaths.push(path);
+        }
+      }
+
+      if (spuriousPaths.length === 0) break;
+
+      const newPredicates = this.discoverPredicates(spuriousPaths, func);
+      for (const pred of newPredicates) {
+        if (!visitedPredicates.has(pred)) {
+          visitedPredicates.add(pred);
+          this.abstractPredicates.push(pred);
+        }
+      }
+
+      abstractedStates[0] = this.refineAbstractState(initialState, this.abstractPredicates);
+    }
+
+    const detectedVuls = this.detectVulnerabilities(allPaths, func.name);
+    allVulnerabilities.push(...detectedVuls);
+
+    return { vulnerabilities: allVulnerabilities };
+  }
+
+  private buildAbstractState(state: ExecutionState): ExecutionState {
+    const abs: AbstractState = {
+      predicates: new Set(),
+      values: new Map(),
+    };
+
+    for (const param of state.locals) {
+      const key = this.compiler.compileExpr(param.expr);
+      abs.values.set(key, 'top');
+    }
+
+    return {
+      ...state,
+      constraints: [],
+    };
+  }
+
+  private discoverPredicates(spuriousPaths: ExecutionPath[], func: WasmFunction): string[] {
+    const predicates: string[] = [];
+
+    for (const path of spuriousPaths) {
+      for (const constraint of path.constraints) {
+        const compiled = this.compiler.compileExpr(constraint.condition);
+        if (!this.abstractPredicates.includes(compiled)) {
+          predicates.push(compiled);
+        }
+      }
+    }
+
+    for (const instr of func.body) {
+      if (instr.op === 'br_if') {
+        const compiled = 'br_cond';
+        if (!predicates.includes(compiled) && !this.abstractPredicates.includes(compiled)) {
+          predicates.push(compiled);
+        }
+      }
+      if (instr.op === 'i32.eqz' || instr.op === 'i32.eq' || instr.op === 'i32.ne') {
+        const pred = `${instr.op}_pred`;
+        if (!predicates.includes(pred) && !this.abstractPredicates.includes(pred)) {
+          predicates.push(pred);
+        }
+      }
+    }
+
+    return predicates;
+  }
+
+  private refineAbstractState(state: ExecutionState, predicates: string[]): ExecutionState {
+    return {
+      ...state,
+      constraints: predicates.map((p) => ({
+        condition: { kind: 'var', name: p, sort: 0 as any } as unknown as Expr,
+        branch: 'true' as const,
+      })),
+    };
+  }
+
+  private async executePaths(
+    func: WasmFunction,
+    initialState: ExecutionState,
+    allPaths: ExecutionPath[],
+    startTime: number,
+  ): Promise<Vulnerability[]> {
     const queue: ExecutionState[] = [initialState];
     const visitedBranches = new Set<string>();
+    const joinPoints = new Map<string, ExecutionState[]>();
 
     while (queue.length > 0 && allPaths.length < this.options.maxPaths) {
       const state = this.options.explorationStrategy === 'bfs' ? queue.shift()! : queue.pop()!;
 
-      if (state.depth > this.options.maxDepth) {
-        continue;
-      }
+      if (state.depth > this.options.maxDepth) continue;
 
       const timeElapsed = Date.now() - startTime;
-      if (timeElapsed > this.options.timeoutMs) {
-        break;
-      }
+      if (timeElapsed > this.options.timeoutMs) break;
 
-      const body = funcEntry.body;
+      const body = func.body;
       const path = this.executeBlock(body, { ...state, pathId: this.nextPathId++ }, 0, allPaths);
 
       if (path) {
-        allPaths.push(path);
+        const feasible = await this.isPathFeasibleSmt(path);
+        if (feasible) {
+          allPaths.push(path);
+        }
       }
 
       const forkPoints = this.findForkPoints(body, state);
@@ -250,7 +432,24 @@ export class SymbolicExecutor {
         visitedBranches.add(branchKey);
 
         const forkedState = this.forkState(state, fork);
-        if (await this.isPathFeasible(forkedState)) {
+        if (this.options.pathMerging) {
+          const joinKey = this.computeJoinKey(fork.label, body);
+          if (joinKey) {
+            const states = joinPoints.get(joinKey) ?? [];
+            states.push(forkedState);
+            if (states.length >= 2) {
+              const merged = this.mergeStates(states);
+              if (merged && (await this.checkFeasibility(merged))) {
+                queue.push(merged);
+              }
+              joinPoints.delete(joinKey);
+              continue;
+            }
+            joinPoints.set(joinKey, states);
+          }
+        }
+
+        if (await this.checkFeasibility(forkedState)) {
           queue.push(forkedState);
         }
       }
@@ -261,21 +460,7 @@ export class SymbolicExecutor {
       }
     }
 
-    const vulnerabilities = this.detectVulnerabilities(allPaths, funcName);
-    const coverage = this.computeCoverage(allPaths, funcEntry);
-    const pathConstraints = allPaths.map((p) =>
-      p.constraints.map((c) => this.compiler.compileExpr(c.condition)).join(' && '),
-    );
-
-    return {
-      functionName: funcName,
-      pathsExplored: allPaths.length,
-      totalPaths: this.options.maxPaths,
-      vulnerabilities,
-      coverage,
-      executionTimeMs: Date.now() - startTime,
-      pathConstraints,
-    };
+    return this.detectVulnerabilities(allPaths, func.name);
   }
 
   async executeSymbolic(
@@ -314,6 +499,62 @@ export class SymbolicExecutor {
     });
 
     return this.executeFunction(funcName, symbolicArgs);
+  }
+
+  private computeJoinKey(forkLabel: string, body: WasmInstr[]): string | null {
+    for (let i = 0; i < body.length; i++) {
+      const instr = body[i];
+      if (
+        (instr.op === 'if_else' || instr.op === 'block' || instr.op === 'loop') &&
+        instr.label === forkLabel.replace(/^(br_if_|if_|select_)/, '')
+      ) {
+        return `join_${forkLabel}`;
+      }
+    }
+    return null;
+  }
+
+  private mergeStates(states: ExecutionState[]): ExecutionState | null {
+    if (states.length < 2) return states[0] ?? null;
+
+    const base = states[0];
+
+    for (let i = 1; i < states.length; i++) {
+      const other = states[i];
+      if (base.stack.length !== other.stack.length) continue;
+
+      const mergedConstraints = [...base.constraints, ...other.constraints];
+
+      const mergedStack: SymbolicValue[] = base.stack.map((sv, idx) => {
+        if (idx < other.stack.length) {
+          const otherSv = other.stack[idx];
+          if (this.exprsEqual(sv.expr, otherSv.expr)) return sv;
+          const merged: SymbolicValue = {
+            expr: ite_(
+              base.constraints[base.constraints.length - 1]?.condition ?? boolVal(true),
+              sv.expr,
+              otherSv.expr,
+            ),
+            type: sv.type,
+          };
+          return merged;
+        }
+        return sv;
+      });
+
+      return {
+        ...base,
+        stack: mergedStack,
+        constraints: mergedConstraints,
+        pathId: this.nextPathId++,
+      };
+    }
+
+    return base;
+  }
+
+  private exprsEqual(a: Expr, b: Expr): boolean {
+    return this.compiler.compileExpr(a) === this.compiler.compileExpr(b);
   }
 
   private findForkPoints(
@@ -358,20 +599,41 @@ export class SymbolicExecutor {
     };
   }
 
-  private async isPathFeasible(state: ExecutionState): Promise<boolean> {
-    if (this.options.concolicTesting) {
-      if (state.constraints.length > 0) {
-        const allConstraints = state.constraints.map((c) => this.compiler.compileExpr(c.condition));
-        const query = `(set-logic QF_BV)\n${allConstraints.map((c) => `(assert ${c})`).join('\n')}\n(check-sat)`;
-        try {
-          const result = await this.solver.solve(query, 5000);
-          return result.sat !== false;
-        } catch {
-          return true;
-        }
-      }
+  private async isPathFeasibleSmt(path: ExecutionPath): Promise<boolean> {
+    if (path.constraints.length === 0) return true;
+
+    const allConstraints = path.constraints.map((c) => this.compiler.compileExpr(c.condition));
+    const query = [
+      '(set-logic QF_BV)',
+      ...allConstraints.map((c) => `(assert ${c})`),
+      '(check-sat)',
+    ].join('\n');
+
+    try {
+      const result = await this.solver.solve(query, 5000);
+      return result.sat !== false;
+    } catch {
+      return true;
     }
-    return true;
+  }
+
+  private async checkFeasibility(state: ExecutionState): Promise<boolean> {
+    if (!this.options.concolicTesting) return true;
+    if (state.constraints.length === 0) return true;
+
+    const allConstraints = state.constraints.map((c) => this.compiler.compileExpr(c.condition));
+    const query = [
+      '(set-logic QF_BV)',
+      ...allConstraints.map((c) => `(assert ${c})`),
+      '(check-sat)',
+    ].join('\n');
+
+    try {
+      const result = await this.solver.solve(query, 2000);
+      return result.sat !== false;
+    } catch {
+      return true;
+    }
   }
 
   private makePath(
@@ -437,56 +699,55 @@ export class SymbolicExecutor {
             break;
 
           case 'i32.add': {
-            const r = this.popStack(execState);
-            const l = this.popStack(execState);
-            const result: SymbolicValue = {
-              expr: add(l.expr, r.expr),
+            const ra = this.popStack(execState);
+            const la = this.popStack(execState);
+            this.checkOverflowSmt(la, ra, 'add', 'i32', execState, allPaths, state.functionName);
+            execState.stack.push({
+              expr: add(la.expr, ra.expr),
               type: 'i32',
-            };
-            this.checkOverflow(l, r, 'add', execState, allPaths, state.functionName);
-            execState.stack.push(result);
+            });
             break;
           }
 
           case 'i32.sub': {
-            const r = this.popStack(execState);
-            const l = this.popStack(execState);
-            const result: SymbolicValue = {
-              expr: sub(l.expr, r.expr),
+            const rs = this.popStack(execState);
+            const ls = this.popStack(execState);
+            this.checkOverflowSmt(ls, rs, 'sub', 'i32', execState, allPaths, state.functionName);
+            execState.stack.push({
+              expr: sub(ls.expr, rs.expr),
               type: 'i32',
-            };
-            this.checkUnderflow(l, r, 'sub', execState, allPaths, state.functionName);
-            execState.stack.push(result);
+            });
             break;
           }
 
           case 'i32.mul': {
-            const r = this.popStack(execState);
-            const l = this.popStack(execState);
+            const rm = this.popStack(execState);
+            const lm = this.popStack(execState);
+            this.checkOverflowSmt(lm, rm, 'mul', 'i32', execState, allPaths, state.functionName);
             execState.stack.push({
-              expr: mul(l.expr, r.expr),
+              expr: mul(lm.expr, rm.expr),
               type: 'i32',
             });
             break;
           }
 
           case 'i32.div_s': {
-            const r = this.popStack(execState);
-            const l = this.popStack(execState);
-            this.checkDivByZero(r, execState, allPaths, state.functionName);
+            const rd = this.popStack(execState);
+            const ld = this.popStack(execState);
+            this.checkDivByZeroSmt(rd, execState, allPaths, state.functionName);
             execState.stack.push({
-              expr: div(l.expr, r.expr),
+              expr: div(ld.expr, rd.expr),
               type: 'i32',
             });
             break;
           }
 
           case 'i32.rem_s': {
-            const r = this.popStack(execState);
-            const l = this.popStack(execState);
-            this.checkDivByZero(r, execState, allPaths, state.functionName);
+            const rr = this.popStack(execState);
+            const lr = this.popStack(execState);
+            this.checkDivByZeroSmt(rr, execState, allPaths, state.functionName);
             execState.stack.push({
-              expr: mod(l.expr, r.expr),
+              expr: mod(lr.expr, rr.expr),
               type: 'i32',
             });
             break;
@@ -561,71 +822,109 @@ export class SymbolicExecutor {
             break;
           }
 
-          case 'i64.add':
-          case 'i64.sub':
-          case 'i64.mul':
-          case 'i64.div_s':
-          case 'i64.rem_s': {
-            const r64 = this.popStack(execState);
-            const l64 = this.popStack(execState);
-            let resultExpr: Expr;
-            switch (instr.op) {
-              case 'i64.add':
-                resultExpr = add(l64.expr, r64.expr);
-                break;
-              case 'i64.sub':
-                resultExpr = sub(l64.expr, r64.expr);
-                break;
-              case 'i64.mul':
-                resultExpr = mul(l64.expr, r64.expr);
-                break;
-              case 'i64.div_s':
-                this.checkDivByZero(r64, execState, allPaths, state.functionName);
-                resultExpr = div(l64.expr, r64.expr);
-                break;
-              case 'i64.rem_s':
-                this.checkDivByZero(r64, execState, allPaths, state.functionName);
-                resultExpr = mod(l64.expr, r64.expr);
-                break;
-              default:
-                resultExpr = add(l64.expr, r64.expr);
-            }
-            execState.stack.push({ expr: resultExpr, type: 'i64' });
+          case 'i64.add': {
+            const r64a = this.popStack(execState);
+            const l64a = this.popStack(execState);
+            this.checkOverflowSmt(
+              l64a,
+              r64a,
+              'add',
+              'i64',
+              execState,
+              allPaths,
+              state.functionName,
+            );
+            execState.stack.push({ expr: add(l64a.expr, r64a.expr), type: 'i64' });
             break;
           }
 
-          case 'i64.eq':
-          case 'i64.ne':
-          case 'i64.lt_s':
-          case 'i64.le_s':
-          case 'i64.gt_s':
+          case 'i64.sub': {
+            const r64s = this.popStack(execState);
+            const l64s = this.popStack(execState);
+            this.checkOverflowSmt(
+              l64s,
+              r64s,
+              'sub',
+              'i64',
+              execState,
+              allPaths,
+              state.functionName,
+            );
+            execState.stack.push({ expr: sub(l64s.expr, r64s.expr), type: 'i64' });
+            break;
+          }
+
+          case 'i64.mul': {
+            const r64m = this.popStack(execState);
+            const l64m = this.popStack(execState);
+            this.checkOverflowSmt(
+              l64m,
+              r64m,
+              'mul',
+              'i64',
+              execState,
+              allPaths,
+              state.functionName,
+            );
+            execState.stack.push({ expr: mul(l64m.expr, r64m.expr), type: 'i64' });
+            break;
+          }
+
+          case 'i64.div_s': {
+            const r64d = this.popStack(execState);
+            const l64d = this.popStack(execState);
+            this.checkDivByZeroSmt(r64d, execState, allPaths, state.functionName);
+            execState.stack.push({ expr: div(l64d.expr, r64d.expr), type: 'i64' });
+            break;
+          }
+
+          case 'i64.rem_s': {
+            const r64r = this.popStack(execState);
+            const l64r = this.popStack(execState);
+            this.checkDivByZeroSmt(r64r, execState, allPaths, state.functionName);
+            execState.stack.push({ expr: mod(l64r.expr, r64r.expr), type: 'i64' });
+            break;
+          }
+
+          case 'i64.eq': {
+            const r64 = this.popStack(execState);
+            const l64 = this.popStack(execState);
+            execState.stack.push({ expr: eq(l64.expr, r64.expr), type: 'i32' });
+            break;
+          }
+
+          case 'i64.ne': {
+            const r64 = this.popStack(execState);
+            const l64 = this.popStack(execState);
+            execState.stack.push({ expr: neq(l64.expr, r64.expr), type: 'i32' });
+            break;
+          }
+
+          case 'i64.lt_s': {
+            const r64 = this.popStack(execState);
+            const l64 = this.popStack(execState);
+            execState.stack.push({ expr: lt(l64.expr, r64.expr), type: 'i32' });
+            break;
+          }
+
+          case 'i64.le_s': {
+            const r64 = this.popStack(execState);
+            const l64 = this.popStack(execState);
+            execState.stack.push({ expr: le(l64.expr, r64.expr), type: 'i32' });
+            break;
+          }
+
+          case 'i64.gt_s': {
+            const r64 = this.popStack(execState);
+            const l64 = this.popStack(execState);
+            execState.stack.push({ expr: gt(l64.expr, r64.expr), type: 'i32' });
+            break;
+          }
+
           case 'i64.ge_s': {
             const r64 = this.popStack(execState);
             const l64 = this.popStack(execState);
-            let resultExpr: Expr;
-            switch (instr.op) {
-              case 'i64.eq':
-                resultExpr = eq(l64.expr, r64.expr);
-                break;
-              case 'i64.ne':
-                resultExpr = neq(l64.expr, r64.expr);
-                break;
-              case 'i64.lt_s':
-                resultExpr = lt(l64.expr, r64.expr);
-                break;
-              case 'i64.le_s':
-                resultExpr = le(l64.expr, r64.expr);
-                break;
-              case 'i64.gt_s':
-                resultExpr = gt(l64.expr, r64.expr);
-                break;
-              case 'i64.ge_s':
-                resultExpr = ge(l64.expr, r64.expr);
-                break;
-              default:
-                resultExpr = eq(l64.expr, r64.expr);
-            }
-            execState.stack.push({ expr: resultExpr, type: 'i32' });
+            execState.stack.push({ expr: ge(l64.expr, r64.expr), type: 'i32' });
             break;
           }
 
@@ -697,6 +996,24 @@ export class SymbolicExecutor {
           }
 
           case 'loop': {
+            if (this.options.invariantInference && this.loopInvariants.has(instr.label)) {
+              const inv = this.loopInvariants.get(instr.label)!;
+              const invCheck = this.makePath(
+                {
+                  ...state,
+                  constraints: [
+                    ...state.constraints,
+                    { condition: not_(inv), branch: 'false' as const },
+                  ],
+                },
+                execState,
+                'assert_fail',
+                `Loop invariant violated: ${instr.label}`,
+              );
+              allPaths.push(invCheck);
+              break;
+            }
+
             for (let iter = 0; iter < this.options.loopUnrollBound; iter++) {
               const loopResult = this.executeBlock(
                 instr.body,
@@ -706,6 +1023,13 @@ export class SymbolicExecutor {
               );
               if (loopResult && loopResult.terminated === 'return') {
                 return loopResult;
+              }
+            }
+
+            if (this.options.invariantInference && this.options.loopUnrollBound > 0) {
+              const inferredInv = this.inferLoopInvariant(instr, execState, state);
+              if (inferredInv) {
+                this.loopInvariants.set(instr.label, inferredInv);
               }
             }
             break;
@@ -759,6 +1083,14 @@ export class SymbolicExecutor {
     return this.makePath(state, execState, 'return');
   }
 
+  private inferLoopInvariant(
+    loop: { label: string; body: WasmInstr[] },
+    execState: SymbolicState,
+    state: ExecutionState,
+  ): Expr | null {
+    return null;
+  }
+
   private executeContinuation(
     body: WasmInstr[],
     state: ExecutionState,
@@ -800,45 +1132,75 @@ export class SymbolicExecutor {
     };
   }
 
-  private checkOverflow(
+  private async checkOverflowSmt(
     l: SymbolicValue,
     r: SymbolicValue,
     op: string,
+    width: string,
     state: SymbolicState,
     allPaths: ExecutionPath[],
     funcName: string,
-  ): void {
-    if (op === 'add') {
-      allPaths.push(this.makeStubPath(state, 'overflow'));
+  ): Promise<void> {
+    const is32 = width === 'i32';
+
+    let overflowCond: Expr | null = null;
+
+    switch (op) {
+      case 'add': {
+        const maxVal = is32 ? bv32Val(0x7fffffff) : bv64Val(9223372036854775807n);
+        const minVal = is32 ? bv32Val(0x80000000) : bv64Val(9223372036854775808n);
+        const sum = add(l.expr, r.expr);
+        overflowCond = or_(
+          and_(gt(l.expr, maxVal), gt(r.expr, maxVal)),
+          and_(lt(l.expr, minVal), lt(r.expr, minVal)),
+          neq(sub(sum, l.expr), r.expr),
+        );
+        break;
+      }
+      case 'sub': {
+        const maxVal = is32 ? bv32Val(0x7fffffff) : bv64Val(9223372036854775807n);
+        const minVal = is32 ? bv32Val(0x80000000) : bv64Val(9223372036854775808n);
+        overflowCond = or_(
+          and_(lt(l.expr, minVal), gt(r.expr, intVal(0))),
+          and_(gt(l.expr, maxVal), lt(r.expr, intVal(0))),
+        );
+        break;
+      }
+      case 'mul': {
+        const negOne = is32 ? bv32Val(0xffffffff) : bv64Val(0xffffffffffffffffn);
+        const result = mul(l.expr, r.expr);
+        overflowCond = and_(
+          neq(l.expr, intVal(0)),
+          neq(r.expr, intVal(0)),
+          neq(div(result, l.expr), r.expr),
+        );
+        break;
+      }
+    }
+
+    if (overflowCond) {
+      const overflowState: SymbolicState = {
+        ...state,
+        constraints: [...state.constraints, { condition: overflowCond, branch: 'true' as const }],
+      };
+      allPaths.push(this.makeStubPath(overflowState, 'overflow'));
     }
   }
 
-  private checkUnderflow(
-    l: SymbolicValue,
-    r: SymbolicValue,
-    op: string,
-    state: SymbolicState,
-    allPaths: ExecutionPath[],
-    funcName: string,
-  ): void {
-    if (op === 'sub') {
-      allPaths.push(this.makeStubPath(state, 'overflow'));
-    }
-  }
-
-  private checkDivByZero(
+  private async checkDivByZeroSmt(
     divisor: SymbolicValue,
     state: SymbolicState,
     allPaths: ExecutionPath[],
     funcName: string,
-  ): void {
+  ): Promise<void> {
+    const zeroExpr = divisor.type === 'i32' ? bv32Val(0) : bv64Val(0n);
     const path = this.makeStubPath(
       {
         ...state,
         constraints: [
           ...state.constraints,
           {
-            condition: eq(divisor.expr, divisor.type === 'i32' ? bv32Val(0) : bv64Val(0n)),
+            condition: eq(divisor.expr, zeroExpr),
             branch: 'true' as const,
           },
         ],
@@ -885,6 +1247,12 @@ export class SymbolicExecutor {
         const calleeFn = state.stack.pop();
         state.callDepth++;
         state.reentrantCalls.add(callee ? this.compiler.compileExpr(callee.expr) : 'unknown');
+
+        const symResult: SymbolicValue = {
+          expr: intVar(`${funcName}_call_result_${this.nextPathId++}`),
+          type: 'i64',
+        };
+        state.stack.push(symResult);
         break;
       }
       case 'emit_event': {
@@ -897,6 +1265,10 @@ export class SymbolicExecutor {
         break;
       }
       case 'require_auth': {
+        break;
+      }
+      case 'panic_with_error': {
+        allPaths.push(this.makeStubPath(state, 'panic', 'Host function panic_with_error'));
         break;
       }
       case 'panic': {
@@ -916,6 +1288,29 @@ export class SymbolicExecutor {
           ],
         };
         allPaths.push(this.makeStubPath(assertState, 'assert_fail', 'Assertion violation'));
+        break;
+      }
+      case 'transfer': {
+        const from = state.stack.pop();
+        const to = state.stack.pop();
+        const amount = state.stack.pop();
+        break;
+      }
+      case 'balance': {
+        const addr = state.stack.pop();
+        const symBal: SymbolicValue = {
+          expr: intVar(`${funcName}_balance_${this.nextPathId++}`),
+          type: 'i64',
+        };
+        state.stack.push(symBal);
+        break;
+      }
+      case 'supply': {
+        const symSupply: SymbolicValue = {
+          expr: intVar(`${funcName}_supply_${this.nextPathId++}`),
+          type: 'i64',
+        };
+        state.stack.push(symSupply);
         break;
       }
     }
@@ -945,6 +1340,20 @@ export class SymbolicExecutor {
             type: 'integer_overflow',
             severity: 'high',
             description: `Integer overflow detected in ${funcName}`,
+            functionName: funcName,
+            pathId: path.state.pathId,
+            witness: path.constraints.map((c) => ({
+              function: funcName,
+              constraints: this.compiler.compileExpr(c.condition),
+            })),
+          });
+          break;
+
+        case 'underflow':
+          vulnerabilities.push({
+            type: 'integer_underflow',
+            severity: 'high',
+            description: `Integer underflow detected in ${funcName}`,
             functionName: funcName,
             pathId: path.state.pathId,
             witness: path.constraints.map((c) => ({
