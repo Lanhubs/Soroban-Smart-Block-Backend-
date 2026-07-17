@@ -203,24 +203,28 @@ export function classifyWallet(
     ...exportedFns,
   ]);
 
-  const hasMultiSig = analysis.signerCount > 1
-    || allFunctionNames.has('add_signer')
-    || allFunctionNames.has('set_threshold')
-    || allFunctionNames.has('__check_auth');
+  const hasMultiSig =
+    analysis.signerCount > 1 ||
+    allFunctionNames.has('add_signer') ||
+    allFunctionNames.has('set_threshold') ||
+    allFunctionNames.has('__check_auth');
 
-  const hasSocialRecovery = allFunctionNames.has('add_guardian')
-    || allFunctionNames.has('social_recover')
-    || allFunctionNames.has('initiate_recovery')
-    || allFunctionNames.has('complete_recovery');
+  const hasSocialRecovery =
+    allFunctionNames.has('add_guardian') ||
+    allFunctionNames.has('social_recover') ||
+    allFunctionNames.has('initiate_recovery') ||
+    allFunctionNames.has('complete_recovery');
 
-  const hasSessionKey = allFunctionNames.has('add_session_key')
-    || allFunctionNames.has('authorize_session')
-    || allFunctionNames.has('revoke_session_key');
+  const hasSessionKey =
+    allFunctionNames.has('add_session_key') ||
+    allFunctionNames.has('authorize_session') ||
+    allFunctionNames.has('revoke_session_key');
 
-  const hasPasskey = (wasmIndicators?.hasPasskeyIndicators ?? false)
-    || allFunctionNames.has('verify_passkey')
-    || allFunctionNames.has('webauthn_verify')
-    || allFunctionNames.has('fido2_verify');
+  const hasPasskey =
+    (wasmIndicators?.hasPasskeyIndicators ?? false) ||
+    allFunctionNames.has('verify_passkey') ||
+    allFunctionNames.has('webauthn_verify') ||
+    allFunctionNames.has('fido2_verify');
 
   if (hasMultiSig) detectedMethods.push('multi_sig');
   if (hasSocialRecovery) detectedMethods.push('social_recovery');
@@ -268,7 +272,91 @@ export function classifyWallet(
   };
 }
 
-// ── Auth decomposition for storage ───────────────────────────────────────────
+// ── Behavioral call-pattern classifier ───────────────────────────────────────
+
+/**
+ * Snapshot of a wallet's historical call counts by function name.
+ * Populated from the DB by the AA indexer after initial classification.
+ */
+export interface WalletBehaviorProfile {
+  /** Map of functionName → call count over all observed transactions */
+  callCounts: Record<string, number>;
+  /** Total number of unique signers observed across all transactions */
+  observedSignerCount: number;
+}
+
+/**
+ * Refine or upgrade a wallet classification using behavioral signals
+ * (historical call frequencies). Called after several transactions have
+ * been processed so the pattern is statistically meaningful.
+ *
+ * Returns a new walletType if behavior strongly indicates a different class,
+ * otherwise returns the existing classification unchanged.
+ */
+export function refineBehaviorClassification(
+  current: WalletClassification,
+  profile: WalletBehaviorProfile,
+): WalletClassification {
+  const counts = profile.callCounts;
+  const totalCalls = Object.values(counts).reduce((s, n) => s + n, 0);
+  if (totalCalls === 0) return current;
+
+  const detectedMethods = new Set(current.authMethods);
+
+  // Strong social-recovery signal: recovery-related calls ≥ 10 % of all calls
+  const recoveryCount =
+    (counts['social_recover'] ?? 0) +
+    (counts['initiate_recovery'] ?? 0) +
+    (counts['complete_recovery'] ?? 0);
+  if (recoveryCount / totalCalls >= 0.1) detectedMethods.add('social_recovery');
+
+  // Strong session-key signal: session management calls ≥ 20 %
+  const sessionCount =
+    (counts['add_session_key'] ?? 0) +
+    (counts['authorize_session'] ?? 0) +
+    (counts['revoke_session_key'] ?? 0);
+  if (sessionCount / totalCalls >= 0.2) detectedMethods.add('session_key');
+
+  // Multi-sig signal: observed > 1 unique signer across transactions
+  if (profile.observedSignerCount > 1) detectedMethods.add('multi_sig');
+
+  const methods = [...detectedMethods];
+  if (
+    methods.length === current.authMethods.length &&
+    methods.every((m) => current.authMethods.includes(m))
+  ) {
+    return current; // no change
+  }
+
+  let walletType: WalletType;
+  if (methods.length > 1) {
+    walletType = 'hybrid';
+  } else if (methods.length === 1) {
+    walletType = methods[0] as WalletType;
+  } else {
+    walletType = current.walletType;
+  }
+
+  return { ...current, walletType, authMethods: methods };
+}
+
+// ── Session key extraction from auth entries ──────────────────────────────────
+
+/**
+ * Extract any session-key candidates directly from auth entries.
+ * A session key is a *non-contract* (G-account) address appearing in auth
+ * entries for a *contract-source* transaction — i.e., a hot signer
+ * authorized by the smart wallet.
+ */
+export function extractSessionKeysFromAuth(
+  sourceAccount: string,
+  authEntries: ParsedAuth[],
+): SessionKeyInfo[] {
+  if (!isContractAddress(sourceAccount)) return [];
+  return authEntries
+    .filter((e) => e.type === 'account' && e.address !== sourceAccount)
+    .map((e) => ({ address: e.address, expiryLedger: null }));
+}
 
 export interface AuthDecompositionRecord {
   transactionHash: string;
@@ -330,7 +418,9 @@ export function renderAuthTree(
 
   if (classification.walletType === 'multi_sig' && authEntries.length > 1) {
     const signers = authEntries.map((e) => shorten(e.address)).join(', ');
-    const threshold = classification.threshold ? `${classification.threshold}-of-${authEntries.length}` : `${authEntries.length}`;
+    const threshold = classification.threshold
+      ? `${classification.threshold}-of-${authEntries.length}`
+      : `${authEntries.length}`;
     return `multi-sig (${threshold}): [${signers}] authorized ${fn}${target}`;
   }
 
@@ -366,4 +456,101 @@ export function renderAuthTree(
 function shorten(addr: string): string {
   if (addr.length <= 12) return addr;
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
+// ── extractAuthData ───────────────────────────────────────────────────────────
+
+export interface ExtractedAuthData {
+  signers: string[];
+  contractAddresses: string[];
+  functionNames: string[];
+  depth: number;
+  hasContractAuth: boolean;
+}
+
+/**
+ * Parse a base64 XDR transaction envelope and extract all authentication data
+ * (signers, contract addresses, called function names, tree depth).
+ */
+export function extractAuthData(rawXdr: string): ExtractedAuthData {
+  const envelope = xdr.TransactionEnvelope.fromXDR(rawXdr, 'base64');
+
+  let operations: xdr.Operation[];
+  if (envelope.switch().name === 'envelopeTypeTxFeeBump') {
+    operations = envelope.feeBump().tx().innerTx().v1().tx().operations();
+  } else if (envelope.switch().name === 'envelopeTypeTx') {
+    operations = envelope.v1().tx().operations();
+  } else {
+    operations = (envelope as any).v0().tx().operations();
+  }
+
+  const signers = new Set<string>();
+  const contractAddresses = new Set<string>();
+  const functionNames = new Set<string>();
+  let hasContractAuth = false;
+  let maxDepth = 0;
+
+  function walkInvocation(node: xdr.SorobanAuthorizedInvocation, depth: number): void {
+    maxDepth = Math.max(maxDepth, depth);
+    const fn = node.function();
+    if (fn.switch().name === 'sorobanAuthorizedFunctionTypeContractFn') {
+      const contractFn = fn.contractFn();
+      functionNames.add(contractFn.functionName().toString());
+      const addr = contractFn.contractAddress();
+      if (addr.switch().name === 'scAddressTypeContract') {
+        contractAddresses.add(StrKey.encodeContract(addr.contractId()));
+      }
+    }
+    for (const sub of node.subInvocations()) walkInvocation(sub, depth + 1);
+  }
+
+  for (const op of operations) {
+    if (op.body().switch().name !== 'invokeHostFunction') continue;
+    for (const authEntry of op.body().invokeHostFunctionOp().auth()) {
+      const creds = authEntry.credentials();
+      if (creds.switch().name === 'sorobanCredentialsAddress') {
+        const addr = creds.address().address();
+        if (addr.switch().name === 'scAddressTypeAccount') {
+          signers.add(StrKey.encodeEd25519PublicKey(addr.accountId().ed25519()));
+        } else if (addr.switch().name === 'scAddressTypeContract') {
+          contractAddresses.add(StrKey.encodeContract(addr.contractId()));
+          hasContractAuth = true;
+        }
+      }
+      walkInvocation(authEntry.rootInvocation(), 1);
+    }
+  }
+
+  return {
+    signers: [...signers],
+    contractAddresses: [...contractAddresses],
+    functionNames: [...functionNames],
+    depth: maxDepth,
+    hasContractAuth,
+  };
+}
+
+// ── flattenAuthTree ───────────────────────────────────────────────────────────
+
+export interface FlatAuthNode {
+  depth: number;
+  contractAddress: string;
+  functionName: string;
+}
+
+/**
+ * Recursively flatten a ParsedAuth[] tree into an ordered list of
+ * {depth, contractAddress, functionName} nodes for call-trace rendering.
+ */
+export function flattenAuthTree(entries: import('./xdr-parser').ParsedAuth[]): FlatAuthNode[] {
+  const result: FlatAuthNode[] = [];
+
+  function walk(subs: import('./xdr-parser').ParsedAuth['subInvocations'], depth: number): void {
+    for (const sub of subs) {
+      result.push({ depth, contractAddress: sub.contractId, functionName: sub.functionName });
+    }
+  }
+
+  for (const entry of entries) walk(entry.subInvocations, 1);
+  return result;
 }

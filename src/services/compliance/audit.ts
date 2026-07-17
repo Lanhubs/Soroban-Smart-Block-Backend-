@@ -1,3 +1,5 @@
+import { logger } from '../../logger';
+
 export type AuditAction =
   | 'screen_address'
   | 'review_alert'
@@ -46,10 +48,10 @@ export function getAuditLogs(filters?: {
 }): AuditEntry[] {
   let logs = [...auditLog];
   if (filters?.action) {
-    logs = logs.filter(l => l.action === filters.action);
+    logs = logs.filter((l) => l.action === filters.action);
   }
   if (filters?.actor) {
-    logs = logs.filter(l => l.actor === filters.actor);
+    logs = logs.filter((l) => l.actor === filters.actor);
   }
   const limit = filters?.limit ?? 100;
   const offset = filters?.offset ?? 0;

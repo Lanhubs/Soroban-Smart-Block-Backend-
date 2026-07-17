@@ -10,6 +10,8 @@ import {
   extractWasmAaIndicators,
   buildAuthDecomposition,
   renderAuthTree,
+  refineBehaviorClassification,
+  extractSessionKeysFromAuth,
 } from '../src/indexer/aa-classifier';
 import type { ParsedAuth } from '../src/indexer/xdr-parser';
 
@@ -38,9 +40,7 @@ const subCallAuth: ParsedAuth[] = [
     type: 'contract',
     address: C_ACCOUNT,
     nonce: null,
-    subInvocations: [
-      { contractId: 'CBBBB', functionName: '__check_auth', args: [] },
-    ],
+    subInvocations: [{ contractId: 'CBBBB', functionName: '__check_auth', args: [] }],
   },
 ];
 
@@ -104,7 +104,10 @@ describe('classifyWallet', () => {
   });
 
   it('returns hybrid when multiple auth methods detected', () => {
-    const wasmIndicators = { exportedFunctions: ['add_signer', 'add_session_key'], hasPasskeyIndicators: false };
+    const wasmIndicators = {
+      exportedFunctions: ['add_signer', 'add_session_key'],
+      hasPasskeyIndicators: false,
+    };
     const result = classifyWallet(C_ACCOUNT, noAuth, null, wasmIndicators);
     expect(result.walletType).toBe('hybrid');
     expect(result.authMethods.length).toBeGreaterThan(1);
@@ -168,8 +171,13 @@ describe('buildAuthDecomposition', () => {
   it('builds correct decomposition record', () => {
     const classification = classifyWallet(C_ACCOUNT, subCallAuth, '__check_auth');
     const record = buildAuthDecomposition(
-      'txhash123', C_ACCOUNT, subCallAuth, classification, 1000,
-      '__check_auth', C_ACCOUNT,
+      'txhash123',
+      C_ACCOUNT,
+      subCallAuth,
+      classification,
+      1000,
+      '__check_auth',
+      C_ACCOUNT,
     );
 
     expect(record.transactionHash).toBe('txhash123');
@@ -220,5 +228,94 @@ describe('renderAuthTree', () => {
     const result = renderAuthTree([], classification, 'transfer', null);
     expect(result).toBeTruthy();
     expect(typeof result).toBe('string');
+  });
+});
+
+// ── refineBehaviorClassification ──────────────────────────────────────────────
+
+describe('refineBehaviorClassification', () => {
+  it('returns current classification unchanged when no calls', () => {
+    const base = classifyWallet(C_ACCOUNT, noAuth, null);
+    const refined = refineBehaviorClassification(base, { callCounts: {}, observedSignerCount: 1 });
+    expect(refined).toEqual(base);
+  });
+
+  it('upgrades to social_recovery when recovery calls ≥ 10 %', () => {
+    const base = classifyWallet(C_ACCOUNT, noAuth, null);
+    const profile = {
+      callCounts: { execute: 8, initiate_recovery: 1, complete_recovery: 1 },
+      observedSignerCount: 1,
+    };
+    const refined = refineBehaviorClassification(base, profile);
+    expect(refined.authMethods).toContain('social_recovery');
+  });
+
+  it('upgrades to session_key when session calls ≥ 20 %', () => {
+    const base = classifyWallet(C_ACCOUNT, noAuth, null);
+    const profile = {
+      callCounts: { execute: 3, add_session_key: 1 },
+      observedSignerCount: 1,
+    };
+    const refined = refineBehaviorClassification(base, profile);
+    expect(refined.authMethods).toContain('session_key');
+  });
+
+  it('upgrades to multi_sig when observedSignerCount > 1', () => {
+    const base = classifyWallet(C_ACCOUNT, noAuth, null);
+    const profile = { callCounts: { execute: 10 }, observedSignerCount: 3 };
+    const refined = refineBehaviorClassification(base, profile);
+    expect(refined.authMethods).toContain('multi_sig');
+  });
+
+  it('returns hybrid when multiple methods detected from behavior', () => {
+    const base = classifyWallet(C_ACCOUNT, noAuth, null);
+    const profile = {
+      callCounts: {
+        execute: 5,
+        add_session_key: 2,
+        initiate_recovery: 1,
+        complete_recovery: 1,
+        unused: 1,
+      },
+      observedSignerCount: 2,
+    };
+    const refined = refineBehaviorClassification(base, profile);
+    expect(refined.walletType).toBe('hybrid');
+    expect(refined.authMethods.length).toBeGreaterThan(1);
+  });
+});
+
+// ── extractSessionKeysFromAuth ────────────────────────────────────────────────
+
+describe('extractSessionKeysFromAuth', () => {
+  it('returns empty array for G-account source', () => {
+    const result = extractSessionKeysFromAuth(G_ACCOUNT, multiSigAuth);
+    expect(result).toHaveLength(0);
+  });
+
+  it('extracts G-account auth entries as session keys for contract source', () => {
+    const auth: ParsedAuth[] = [
+      { type: 'account', address: 'GSESSIONKEY1', nonce: '1', subInvocations: [] },
+      { type: 'account', address: 'GSESSIONKEY2', nonce: '2', subInvocations: [] },
+    ];
+    const result = extractSessionKeysFromAuth(C_ACCOUNT, auth);
+    expect(result).toHaveLength(2);
+    expect(result.map((s) => s.address)).toContain('GSESSIONKEY1');
+    expect(result.every((s) => s.expiryLedger === null)).toBe(true);
+  });
+
+  it('excludes the source address itself from session keys', () => {
+    const auth: ParsedAuth[] = [
+      { type: 'account', address: C_ACCOUNT, nonce: null, subInvocations: [] },
+      { type: 'account', address: 'GOTHER', nonce: '1', subInvocations: [] },
+    ];
+    const result = extractSessionKeysFromAuth(C_ACCOUNT, auth);
+    expect(result.map((s) => s.address)).not.toContain(C_ACCOUNT);
+    expect(result.map((s) => s.address)).toContain('GOTHER');
+  });
+
+  it('returns empty for contract-type auth entries', () => {
+    const result = extractSessionKeysFromAuth(C_ACCOUNT, contractAuth);
+    expect(result).toHaveLength(0);
   });
 });

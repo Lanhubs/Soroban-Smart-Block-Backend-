@@ -6,35 +6,14 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  build:
+    name: Build
     runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: password
-          POSTGRES_DB: soroban_explorer_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 5
-
-    env:
-      STELLAR_NETWORK: testnet
-      DATABASE_URL: postgresql://postgres:password@localhost:5432/soroban_explorer_test
-      TESTNET_DATABASE_URL: postgresql://postgres:password@localhost:5432/soroban_explorer_test
-      TESTNET_READ_REPLICA_URL: postgresql://postgres:password@localhost:5432/soroban_explorer_test
-      TESTNET_RPC_URL: https://soroban-testnet.stellar.org
-      TESTNET_RPC_WS_URL: wss://soroban-testnet.stellar.org
-      TESTNET_HORIZON_URL: https://horizon-testnet.stellar.org
-      TESTNET_PASSPHRASE: "Test SDF Network ; September 2015"
-
     steps:
       - uses: actions/checkout@v4
 
@@ -43,69 +22,55 @@ jobs:
           node-version: 20
           cache: npm
 
-      - run: npm ci
+      - name: Install dependencies
+        run: npm ci
 
-      - run: npx prisma generate
+      - name: TypeScript build
+        run: npm run build
 
-      - run: npx prisma db push --accept-data-loss
+      - name: Prisma field reference validator
+        run: npm run validate:prisma
 
-      - run: npx prisma validate
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-      - run: npm run lint
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
 
-      - run: npm test
+      - name: Install dependencies
+        run: npm ci
 
-      - run: npm run build
+      - name: Lint
+        run: npm run lint
 
-      - name: Verify Specification Compilation
-        run: npx ts-node -e "
-          const { SpecCompiler, spec, invariant, eq, intVar } = require('./src/verification');
-          const compiler = new SpecCompiler({ produceProofs: true });
-          const result = compiler.compile(spec('ci_check', 'test', [
-            invariant('test_inv', eq(intVar('a'), intVar('b')))
-          ]));
-          console.log('Spec compilation OK,', result.propertyMapping.length, 'properties');
-        "
+      - name: Type-check (src)
+        run: npm run build -- --noEmit
 
-      - name: Check SMT Solvers Available
-        run: |
-          echo "Z3: $(which z3 2>/dev/null && z3 --version || echo 'NOT FOUND')"
-          echo "CVC5: $(which cvc5 2>/dev/null && cvc5 --version || echo 'NOT FOUND')"
-        continue-on-error: true
+      - name: Type-check (scripts)
+        run: npm run typecheck:scripts
 
-      - name: Verify Verification Module Loads
-        run: npx ts-node -e "
-          const v = require('./src/verification');
-          console.log('Verification module loaded:', Object.keys(v).length, 'exports');
-          console.log('Exports:', Object.keys(v).join(', '));
-        "
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Property Verification Pipeline
-        run: npx ts-node -e "
-          const { SmtSolver, SpecCompiler, spec, invariant, eq, intVar } = require('./src/verification');
-          const solver = new SmtSolver({ timeoutMs: 30000 });
-          (async () => {
-            const healthy = await solver.healthCheck();
-            console.log('Solver health:', healthy ? 'OK' : 'UNAVAILABLE');
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
 
-            const compiler = new SpecCompiler({ incremental: true, produceUnsatCores: true });
-            const testSpec = spec('ci_verify', 'CAFEBABE', [
-              invariant('no_overflow', eq(intVar('x'), intVar('x'))),
-            ]);
-            const compiled = compiler.compile(testSpec);
-            console.log('SMT query size:', compiled.smtLib2.length, 'bytes');
-            console.log('Properties:', compiled.propertyMapping.length);
+      - name: Install dependencies
+        run: npm ci
 
-            const result = await solver.solve(compiled.smtLib2, 10000);
-            console.log('Solver result:', result.sat === false ? 'VERIFIED' : result.sat === true ? 'VIOLATED' : 'UNKNOWN');
-            console.log('Solver time:', result.timeMs, 'ms');
-          })().catch(e => { console.error('Pipeline error:', e.message); process.exit(1); });
-        "
-
-      - name: Wasm CFG Extraction Check
-        run: npx ts-node -e "
-          const { WasmCfgExtractor } = require('./src/verification/wasm-cfg-extractor');
-          const extractor = new WasmCfgExtractor();
-          console.log('WasmCfgExtractor loaded successfully');
-          console.log('Available methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(extractor)).join(', '));
-        "
+      - name: Run tests
+        run: npm test
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/test
+          TESTNET_DATABASE_URL: postgresql://test:test@localhost:5432/test
+          STELLAR_NETWORK: testnet

@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { logger } from '../../logger';
 import { recordAudit } from './audit';
 
 export type WebhookEventType =
@@ -53,7 +54,7 @@ export function unregisterWebhook(id: string): boolean {
 }
 
 export function listWebhooks(): RegisteredWebhook[] {
-  return Array.from(registeredWebhooks.values()).filter(w => w.active);
+  return Array.from(registeredWebhooks.values()).filter((w) => w.active);
 }
 
 export function getWebhook(id: string): RegisteredWebhook | undefined {
@@ -70,8 +71,9 @@ export async function triggerComplianceWebhooks(
     data,
   };
 
-  const targets = Array.from(registeredWebhooks.values())
-    .filter(w => w.active && w.events.includes(event));
+  const targets = Array.from(registeredWebhooks.values()).filter(
+    (w) => w.active && w.events.includes(event),
+  );
 
   if (targets.length === 0) return;
 
@@ -107,7 +109,7 @@ export async function triggerComplianceWebhooks(
           error: (err as Error).message,
         });
         if (attempt < 2) {
-          await new Promise(resolve => setTimeout(resolve, delays[attempt]));
+          await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
         }
       }
     }
@@ -133,7 +135,7 @@ export function notifyListUpdated(source: string, version: string): void {
     source,
     listVersion: version,
     updatedAt: new Date().toISOString(),
-  }).catch(err => logger.error('List update webhook failed', { error: (err as Error).message }));
+  }).catch((err) => logger.error('List update webhook failed', { error: (err as Error).message }));
 }
 
 export async function notifyAddressStatusChanged(
@@ -146,5 +148,7 @@ export async function notifyAddressStatusChanged(
     previousStatus,
     newStatus,
     timestamp: new Date().toISOString(),
-  }).catch(err => logger.error('Status change webhook failed', { error: (err as Error).message }));
+  }).catch((err) =>
+    logger.error('Status change webhook failed', { error: (err as Error).message }),
+  );
 }

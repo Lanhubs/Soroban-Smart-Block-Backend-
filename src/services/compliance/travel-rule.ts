@@ -1,3 +1,4 @@
+import { prismaRead, prismaWrite } from '../../db';
 import { recordAudit } from './audit';
 
 const TRAVEL_RULE_THRESHOLD_XLM = 10000;
@@ -24,8 +25,12 @@ export async function submitTravelRule(data: TravelRuleSubmission): Promise<any>
       data: {
         originatorVasp: data.originatorVasp ?? existing.originatorVasp,
         beneficiaryVasp: data.beneficiaryVasp ?? existing.beneficiaryVasp,
-        originatorInfo: data.originatorInfo ? JSON.parse(JSON.stringify(data.originatorInfo)) : existing.originatorInfo,
-        beneficiaryInfo: data.beneficiaryInfo ? JSON.parse(JSON.stringify(data.beneficiaryInfo)) : existing.beneficiaryInfo,
+        originatorInfo: data.originatorInfo
+          ? JSON.parse(JSON.stringify(data.originatorInfo))
+          : existing.originatorInfo,
+        beneficiaryInfo: data.beneficiaryInfo
+          ? JSON.parse(JSON.stringify(data.beneficiaryInfo))
+          : existing.beneficiaryInfo,
         transferValue: data.transferValue,
         thresholdExceeded,
         travelRuleStatus: 'compliant',
@@ -39,8 +44,12 @@ export async function submitTravelRule(data: TravelRuleSubmission): Promise<any>
       txHash: data.txHash,
       originatorVasp: data.originatorVasp,
       beneficiaryVasp: data.beneficiaryVasp,
-      originatorInfo: data.originatorInfo ? JSON.parse(JSON.stringify(data.originatorInfo)) : undefined,
-      beneficiaryInfo: data.beneficiaryInfo ? JSON.parse(JSON.stringify(data.beneficiaryInfo)) : undefined,
+      originatorInfo: data.originatorInfo
+        ? JSON.parse(JSON.stringify(data.originatorInfo))
+        : undefined,
+      beneficiaryInfo: data.beneficiaryInfo
+        ? JSON.parse(JSON.stringify(data.beneficiaryInfo))
+        : undefined,
       transferValue: data.transferValue,
       thresholdExceeded,
       travelRuleStatus: thresholdExceeded ? 'pending_verification' : 'compliant',

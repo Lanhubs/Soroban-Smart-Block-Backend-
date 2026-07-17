@@ -8,11 +8,12 @@ datasource db {
 }
 
 model Ledger {
-  sequence     Int      @id
-  hash         String   @unique
-  closeTime    DateTime
-  txCount      Int      @default(0)
-  createdAt    DateTime @default(now())
+  sequence           Int      @id
+  hash               String   @unique
+  previousLedgerHash String?
+  closeTime          DateTime
+  txCount            Int      @default(0)
+  createdAt          DateTime @default(now())
 
   transactions Transaction[]
   events       Event[]
@@ -20,6 +21,7 @@ model Ledger {
   @@index([sequence])
   @@index([closeTime])
 }
+
 
 model Contract {
   id                 String   @id @default(cuid())
@@ -201,6 +203,38 @@ model IndexerState {
   lastLedger Int      @default(0)
   updatedAt  DateTime @updatedAt
 }
+
+model RateLimitOverride {
+  id         String   @id @default(cuid())
+  identifier String
+  endpoint   String   @default("/")
+  max        Int      @default(100)
+  windowMs   Int      @default(60000)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([identifier, endpoint])
+}
+
+// Bidirectional mapping: classic Stellar asset ↔ SAC contract address
+model ReorgEvent {
+  id                String   @id @default(cuid())
+  ledgerSequence    Int
+  detectedAt        DateTime @default(now())
+  expectedHash      String
+  actualHash        String
+  previousHash      String
+  rolledBackLedgers Int[]
+}
+
+model LedgerGap {
+  id             String   @id @default(cuid())
+  startSequence  Int
+  endSequence    Int
+  detectedAt     DateTime @default(now())
+  resolved       Boolean  @default(false)
+}
+
 
 model SacMapping {
   id           String   @id @default(cuid())
@@ -520,6 +554,7 @@ model Translation {
   key TranslationKey @relation(fields: [keyId], references: [id])
 
   @@unique([keyId, language])
+  @@index([keyId])
   @@index([language])
 }
 
@@ -1232,31 +1267,40 @@ model Developer {
   apiKeys      DevApiKey[]
   webhooks     DevWebhook[]
   usageRecords UsageRecord[]
+  exportJobs   ExportJob[]
 
   @@index([email])
+  @@index([planId])
 }
 
 model DevApiKey {
-  id            String    @id
-  developerId   String
-  keyPrefix     String
-  keyHash       String
-  name          String
-  permissions   Json      @default("{}")
-  allowedIps    Json?
-  allowedDomains Json?
-  expiresAt     DateTime?
-  lastUsedAt    DateTime?
-  status        String    @default("active")
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id                String    @id
+  developerId       String
+  keyPrefix         String
+  keyHash           String
+  name              String
+  permissions       Json      @default("{}")
+  allowedIps        Json?
+  allowedDomains    Json?
+  allowedEndpoints  Json?     // endpoint whitelist (optional)
+  tier              String    @default("free") // "free" | "developer" | "pro" | "enterprise"
+  rateLimitOverride Int?      // custom req/min override
+  revokedAt         DateTime?
+  usageCount        Int       @default(0)
+  expiresAt         DateTime?
+  lastUsedAt        DateTime?
+  status            String    @default("active")
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   developer     Developer     @relation(fields: [developerId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   usageRecords  UsageRecord[]
 
   @@index([developerId])
   @@index([keyPrefix])
+  @@index([keyHash])
   @@index([status])
+  @@index([tier])
 }
 
 model DevWebhook {
@@ -1268,6 +1312,8 @@ model DevWebhook {
   retryPolicy       Json?
   headers           Json?
   active            Boolean   @default(true)
+  storeResponseBody Boolean   @default(true)
+  responseRetentionDays Int   @default(90)
   lastDeliveryAt    DateTime?
   lastDeliveryStatus String?
   createdAt         DateTime  @default(now())
@@ -1290,12 +1336,14 @@ model DevWebhookDelivery {
   attempt      Int       @default(1)
   delivered    Boolean   @default(false)
   deliveredAt  DateTime?
+  expiresAt    DateTime?
   createdAt    DateTime  @default(now())
 
   webhook DevWebhook @relation(fields: [webhookId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
   @@index([webhookId])
   @@index([delivered])
+  @@index([expiresAt])
 }
 
 model UsageRecord {
@@ -1554,6 +1602,8 @@ model PriceDeviation {
   @@index([tokenA, tokenB, timestamp])
   @@index([deviationPercentage])
   @@index([timestamp])
+  @@index([poolIdA])
+  @@index([poolIdB])
 }
 
 model ArbitrageOpportunity {
@@ -1782,6 +1832,8 @@ model AmmPool {
   assetAAddress   String
   assetBAddress   String
   createdAt       DateTime @default(now())
+
+  @@index([poolAddress])
 }
 
 model AnonymitySetSnapshot {
@@ -1815,6 +1867,9 @@ model Attestation {
   updatedAt       DateTime @updatedAt
 
   profile ReputationProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId])
+  @@index([chainId])
 }
 
 model AuditLog {
@@ -1845,6 +1900,8 @@ model BackfillRequest {
   errorMessage  String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+
+  @@index([userId])
 }
 
 model Bn254GasExemption {
@@ -1956,6 +2013,8 @@ model DtccSettlementBridge {
   ledgerCloseTime  DateTime
   settlementStatus String
   createdAt        DateTime @default(now())
+
+  @@index([dtccSettlementId])
 }
 
 model Endorsement {
@@ -1970,10 +2029,13 @@ model Endorsement {
   createdAt       DateTime @default(now())
 
   profile ReputationProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId])
 }
 
 model ExportJob {
   id            String    @id @default(cuid())
+  developerId   String
   status        String
   progress      Float?
   exportType    String?
@@ -1988,6 +2050,11 @@ model ExportJob {
   processedRows Int?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+
+  developer Developer @relation(fields: [developerId], references: [id], onDelete: Cascade)
+
+  @@index([developerId])
+  @@index([developerId, createdAt])
 }
 
 model FreezeViolation {
@@ -2022,6 +2089,9 @@ model FuzzFinding {
   fuzzRunId   String?
   severity    String?
   createdAt   DateTime @default(now())
+
+  @@index([runId])
+  @@index([fuzzRunId])
 }
 
 model FuzzRun {
@@ -2124,6 +2194,7 @@ model GovernanceVote {
   proposal GovernanceProposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
 
   @@unique([contractAddress, proposalId, voter])
+  @@index([proposalId])
 }
 
 model LinkedIdentity {
@@ -2278,19 +2349,19 @@ model PrivacyAnalytics {
 }
 
 model PrivacyComplianceReport {
-  id                String    @id @default(cuid())
-  address           String    @unique
+  id                String   @id @default(cuid())
+  address           String   @unique
   totalPrivateTx    Int?
   protocolsUsed     String[]
   riskScore         Float?
   flagged           Boolean
   flagReason        String?
   complianceLabel   String?
-  linkedAddresses   Json?
-  lastActivity      DateTime?
-  reportGeneratedAt DateTime?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  linkedAddresses   String[]
+  lastActivity      DateTime
+  reportGeneratedAt DateTime
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 }
 
 model PrivacyProtocolDetail {
@@ -2310,16 +2381,20 @@ model PrivacyTransaction {
   id                     String   @id @default(cuid())
   txHash                 String   @unique
   timestamp              DateTime
-  protocols              Json?
-  guarantees             Json?
+  protocols              String[]
+  guarantees             String[]
+  cryptographicPrimitives Json?
   anonymitySetSize       Int?
   effectiveAnonymitySet  Int?
   privacyScore           Float?
   riskScore              Float?
-  totalValue             Float?
+  totalValue             String?
   usdValue               Float?
+  assetType              String?
   participants           String[]
   contractAddresses      String[]
+  participantCount       Int?
+  ledgerSequence         Int?
   sourceAccount          String?
   createdAt              DateTime @default(now())
 }
@@ -2350,6 +2425,8 @@ model ReputationBadge {
   createdAt DateTime @default(now())
 
   profile ReputationProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId])
 }
 
 model ReputationDelegation {
@@ -2466,6 +2543,8 @@ model ReputationSignal {
   createdAt       DateTime @default(now())
 
   profile ReputationProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId])
 }
 
 model RwaComplianceEvent {
@@ -2505,6 +2584,9 @@ model SandboxCall {
   gasUsed         Int?
   success         Boolean
   createdAt       DateTime @default(now())
+
+  @@index([sessionId])
+  @@index([contractId])
 }
 
 model SandboxCiRun {
@@ -2543,6 +2625,8 @@ model SandboxSession {
   expiresAt DateTime?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
+
+  @@index([userId])
 }
 
 model SandboxShare {
@@ -2706,12 +2790,83 @@ model Token {
 }
 
 model TokenPrice {
-  id          String   @id @default(cuid())
-  tokenAddress String  @unique
-  priceUsd    Float?
-  symbol      String?
-  source      String?
-  createdAt   DateTime @default(now())
+  id              String    @id @default(cuid())
+  tokenAddress    String    @unique
+  priceUsd        Decimal   @default(0)
+  priceXlm        Decimal   @default(0)
+  source          String    @default("composite")
+  confidence      Float     @default(0)
+  volume24hUsd    Decimal?
+  volume24hXlm    Decimal?
+  marketCapUsd    Decimal?
+  fullyDilutedValuation Decimal?
+  circulatingSupply Decimal?
+  totalSupply     Decimal?
+  priceChange1h   Float?
+  priceChange24h  Float?
+  priceChange7d   Float?
+  twap1h          Decimal?
+  twap24h         Decimal?
+  liquidityUsd    Decimal?
+  updatedAt       DateTime  @updatedAt
+
+  @@index([updatedAt(sort: Desc)])
+  @@index([volume24hUsd(sort: Desc)])
+}
+
+model TokenPriceHistory {
+  id              String    @id @default(cuid())
+  tokenAddress    String
+  priceUsd        Decimal
+  priceXlm        Decimal
+  source          String
+  confidence      Float
+  volume24hUsd    Decimal?
+  marketCapUsd    Decimal?
+  timestamp       DateTime
+
+  @@index([tokenAddress, timestamp(sort: Desc)])
+  @@index([timestamp])
+}
+
+model TokenMarketData {
+  id              String    @id @default(cuid())
+  tokenAddress    String    @unique
+  symbol          String?
+  name            String?
+  decimals        Int?
+  totalSupply     Decimal?
+  circulatingSupply Decimal?
+  holderCount     Int       @default(0)
+  transferCount24h Int      @default(0)
+  uniqueSenders24h Int      @default(0)
+  uniqueReceivers24h Int    @default(0)
+  averageTransferValueUsd Decimal?
+  isStablecoin    Boolean   @default(false)
+  stablecoinPeg   String?
+  pegDeviation24h Float?
+  pegStabilityScore Float?
+  tags            String[]
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@index([holderCount(sort: Desc)])
+  @@index([transferCount24h(sort: Desc)])
+}
+
+model PriceAlert {
+  id              String    @id @default(cuid())
+  userId          String?
+  tokenAddress    String
+  alertType       String
+  threshold       String
+  timeWindow      String?
+  isActive        Boolean   @default(true)
+  lastTriggeredAt DateTime?
+  createdAt       DateTime   @default(now())
+
+  @@index([userId])
+  @@index([tokenAddress])
 }
 
 model VerifiableCredential {
@@ -2733,6 +2888,8 @@ model VerifiableCredential {
   createdAt           DateTime @default(now())
 
   profile ReputationProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId])
 }
 
 model VolumeAlert {
@@ -2762,33 +2919,45 @@ model VulnerabilitySource {
 }
 
 model WebhookDelivery {
-  id             String    @id @default(cuid())
-  subscriptionId String
-  eventId        String?
-  attempt        Int?
-  status         String?
-  httpStatus     Int?
-  responseBody   String?
-  errorMsg       String?
-  deliveredAt    DateTime?
-  nextRetryAt    DateTime?
-  createdAt      DateTime  @default(now())
+  id               String    @id @default(cuid())
+  subscriptionId   String
+  eventId          String?
+  attempt          Int?
+  status           String?
+  processingStatus String    @default("idle") // "idle" | "processing" | "done"
+  leaseExpiresAt   DateTime? // null unless processingStatus == "processing"
+  httpStatus       Int?
+  responseBody     String?
+  errorMsg         String?
+  deliveredAt      DateTime?
+  nextRetryAt      DateTime?
+  expiresAt        DateTime?
+  createdAt        DateTime  @default(now())
 
   subscription WebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId])
+  @@index([expiresAt])
+  @@index([status, nextRetryAt, processingStatus])
 }
 
 model WebhookSubscription {
   id              String    @id @default(cuid())
+  apiKeyId        String
   url             String
-  secret          String?
+  secret          String
   contractAddress String?
   eventType       String?
   topicSymbol     String?
-  active          Boolean
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  active          Boolean  @default(true)
+  storeResponseBody Boolean @default(true)
+  responseRetentionDays Int @default(90)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   delivery WebhookDelivery[]
+
+  @@index([apiKeyId])
 }
 
 model YieldDistribution {
@@ -2815,6 +2984,8 @@ model YieldHistorySnapshot {
   tvl           Float?
   ledgerSequence Int
   createdAt     DateTime @default(now())
+
+  @@index([opportunityId])
 }
 
 model YieldOpportunity {
@@ -2850,3 +3021,1047 @@ model ZkpVerificationEvent {
   ledgerCloseTime     DateTime
   createdAt           DateTime @default(now())
 }
+
+// ─── Soroban Reentrancy Fortress (Issue #307) ────────────────────────────────
+
+enum ReentrancyType {
+  SIMPLE
+  CROSS_CONTRACT
+  MULTI_STEP
+  READ_ONLY
+  CROSS_FUNCTION
+  DESTRUCTIVE
+}
+
+enum ReentrancySeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model CallGraphVertex {
+  id              String   @id @default(cuid())
+  txHash          String   @map("tx_hash")
+  contractAddress String   @map("contract_address")
+  functionName    String   @map("function_name")
+  depth           Int
+  callIndex       Int      @map("call_index")
+  value           String?
+  preStateReads   Json?    @map("pre_state_reads")
+  postStateWrites Json?    @map("post_state_writes")
+  timestamp       DateTime
+
+  @@index([txHash])
+  @@index([contractAddress])
+  @@map("call_graph_vertices")
+}
+
+model CallGraphEdge {
+  id            String   @id @default(cuid())
+  txHash        String   @map("tx_hash")
+  fromVertexId  String   @map("from_vertex_id")
+  toVertexId    String   @map("to_vertex_id")
+  functionName  String   @map("function_name")
+  value         String?
+  gasForwarded  Int?     @map("gas_forwarded")
+  argsHash      String?  @map("args_hash")
+  callIndex     Int      @map("call_index")
+  timestamp     DateTime
+
+  @@index([txHash])
+  @@index([fromVertexId])
+  @@index([toVertexId])
+  @@map("call_graph_edges")
+}
+
+model ReentrancyFinding {
+  id              String            @id @default(cuid())
+  txHash          String            @map("tx_hash")
+  contractAddress String            @map("contract_address")
+  reentrancyType  ReentrancyType    @map("reentrancy_type")
+  severity        ReentrancySeverity
+  likelihood      String
+  loopPath        Json
+  entryPoint      String            @map("entry_point")
+  valueAtRisk     String?           @map("value_at_risk")
+  usdValueAtRisk  Float?            @map("usd_value_at_risk")
+  profitPotential Float?            @map("profit_potential")
+  description     String
+  detectedAt      DateTime          @map("detected_at")
+
+  @@index([txHash])
+  @@index([contractAddress])
+  @@index([severity])
+  @@map("reentrancy_findings")
+}
+
+model ContractRiskScore {
+  id                String   @id @default(cuid())
+  contractAddress   String   @unique @map("contract_address")
+  riskScore         Int      @map("risk_score")
+  previousScore     Int?     @map("previous_score")
+  totalFindings     Int      @map("total_findings")
+  criticalFindings  Int      @map("critical_findings")
+  highFindings      Int      @map("high_findings")
+  mediumFindings    Int      @map("medium_findings")
+  riskFactors       Json     @map("risk_factors")
+  lastAnalyzed      DateTime @map("last_analyzed")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@map("contract_risk_scores")
+}
+
+model ReentrancyAlertExtended {
+  id              String   @id @default(cuid())
+  contractAddress String   @map("contract_address")
+  findingId       String?  @map("finding_id")
+  alertType       String   @map("alert_type")
+  severity        String
+  message         String
+  metadata        Json?
+  createdAt       DateTime @map("created_at")
+  acknowledged    Boolean  @default(false)
+  acknowledgedAt  DateTime? @map("acknowledged_at")
+
+  @@index([contractAddress, createdAt(sort: Desc)])
+  @@map("reentrancy_alerts")
+}
+
+model ReentrancyStats {
+  id                  String   @id @default(cuid())
+  timestamp           DateTime
+  totalCallGraphs     Int      @map("total_call_graphs")
+  contractsAnalyzed   Int      @map("contracts_analyzed")
+  contractsWithLoops  Int      @map("contracts_with_loops")
+  highRiskContracts   Int      @map("high_risk_contracts")
+  criticalFindings    Int      @map("critical_findings")
+  totalFindings       Int      @map("total_findings")
+  mostCommonPatterns  Json     @map("most_common_patterns")
+  avgDepth            Float?   @map("avg_depth")
+  maxDepth            Int?     @map("max_depth")
+  valueAtRiskTotal    String?  @map("value_at_risk_total")
+
+  @@map("reentrancy_stats")
+}
+
+// ── Natural Language Query Interface (#328) ───────────────────────────────────
+
+enum QueryFeedback {
+  helpful
+  not_helpful
+  incorrect
+  partial
+}
+
+model NlQuery {
+  id               String         @id @default(cuid())
+  userId           String?
+  query            String
+  language         String?
+  interpretedQuery Json?
+  sql              String?
+  apiEndpoint      String?
+  resolved         Boolean        @default(false)
+  responseTime     Int?
+  tokensUsed       Int?
+  feedback         QueryFeedback?
+  createdAt        DateTime       @default(now())
+
+  context      NlQueryContext?
+  savedQueries SavedQuery[]
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@map("nl_queries")
+}
+
+model NlQueryContext {
+  id               String   @id @default(cuid())
+  queryId          String   @unique @map("query_id")
+  query            NlQuery  @relation(fields: [queryId], references: [id])
+  sessionId        String?  @map("session_id")
+  previousQueries  Json?    @map("previous_queries")
+  resolvedEntities Json?    @map("resolved_entities")
+  activeFilters    Json?    @map("active_filters")
+  contextWindow    Int      @default(5) @map("context_window")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@index([sessionId])
+  @@map("nl_query_contexts")
+}
+
+model NlSession {
+  id        String   @id @default(cuid())
+  userId    String?
+  context   Json?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@map("nl_sessions")
+}
+
+model SavedQuery {
+  id         String    @id @default(cuid())
+  userId     String?
+  name       String
+  nlTemplate String    @map("nl_template")
+  parameters Json?
+  schedule   String?
+  lastRun    DateTime? @map("last_run")
+  nextRun    DateTime? @map("next_run")
+  active     Boolean   @default(true)
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  queryId    String?   @map("query_id")
+  query      NlQuery?  @relation(fields: [queryId], references: [id])
+
+  @@index([userId])
+  @@index([queryId])
+  @@map("saved_queries")
+}
+
+model NlEmbedding {
+  id          String   @id @default(cuid())
+  query       String   @unique
+  embedding   Bytes
+  intent      String
+  filters     Json?
+  usageCount  Int      @default(0) @map("usage_count")
+  successRate Float    @default(0) @map("success_rate")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("nl_embeddings")
+}
+
+model NlQueryTemplate {
+  id          String   @id @default(cuid())
+  userId      String?
+  name        String
+  description String?
+  nlTemplate  String   @map("nl_template")
+  parameters  Json?
+  category    String?
+  usageCount  Int      @default(0) @map("usage_count")
+  isPublic    Boolean  @default(false) @map("is_public")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([isPublic])
+  @@index([category])
+  @@map("nl_query_templates")
+}
+
+model NlReport {
+  id          String    @id @default(cuid())
+  userId      String?
+  name        String
+  nlTemplate  String    @map("nl_template")
+  parameters  Json?
+  schedule    String?
+  reportType  String    @default("one-time") @map("report_type")
+  webhookUrl  String?   @map("webhook_url")
+  email       String?
+  active      Boolean   @default(true)
+  lastRun     DateTime? @map("last_run")
+  nextRun     DateTime? @map("next_run")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  history NlReportHistory[]
+
+  @@index([userId])
+  @@map("nl_reports")
+}
+
+model NlReportHistory {
+  id        String   @id @default(cuid())
+  reportId  String   @map("report_id")
+  report    NlReport @relation(fields: [reportId], references: [id])
+  status    String
+  result    Json?
+  error     String?
+  ranAt     DateTime @default(now()) @map("ran_at")
+
+  @@index([reportId, ranAt(sort: Desc)])
+  @@map("nl_report_history")
+}
+
+model NlAlert {
+  id          String   @id @default(cuid())
+  userId      String?
+  nlQuery     String   @map("nl_query")
+  intent      String
+  conditions  Json?
+  webhookUrl  String?  @map("webhook_url")
+  email       String?
+  active      Boolean  @default(true)
+  lastFired   DateTime? @map("last_fired")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@index([active])
+  @@map("nl_alerts")
+}
+
+// ── Historical Data Market (#327) ────────────────────────────────────────────
+
+enum ArchivalNodeStatus {
+  active
+  inactive
+  jailed
+  slashed
+}
+
+enum EpochStatus {
+  storing
+  stored
+  verifying
+  verified
+  failed
+  removed
+}
+
+enum ChallengeStatus {
+  pending
+  issued
+  responded
+  verified
+  failed
+  expired
+}
+
+enum RetrievalStatus {
+  pending
+  routing
+  in_progress
+  completed
+  failed
+  refunded
+}
+
+model ArchivalNode {
+  id               String             @id @default(cuid())
+  address          String             @unique
+  name             String?
+  endpoint         String
+  stakedAmount     Float              @default(0)
+  stakeAsset       String             @default("XLM")
+  commission       Float?
+  reputation       Float              @default(0)
+  reputationHistory Json?
+  totalEarnings    Float              @default(0)
+  totalServed      Int                @default(0)
+  totalChallenges  Int                @default(0)
+  challengesPassed Int                @default(0)
+  challengesFailed Int                @default(0)
+  uptime24h        Float              @default(0)
+  uptime7d         Float              @default(0)
+  uptime30d        Float              @default(0)
+  avgResponseTime  Int?
+  p95ResponseTime  Int?
+  maxStorageGb     Int?
+  usedStorageGb    Int?
+  supportedEpochs  Json?
+  slashedAmount    Float              @default(0)
+  status           ArchivalNodeStatus @default(active)
+  registeredAt     DateTime           @default(now())
+  lastSeen         DateTime           @default(now())
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  epochs           ArchivalEpoch[]
+  challenges       StorageChallenge[]
+  retrievals       DataRetrieval[]
+  slaOffers        SlaOffer[]
+  slashes          ArchivalSlash[]
+
+  @@index([status])
+  @@index([reputation])
+  @@map("archival_nodes")
+}
+
+model ArchivalEpoch {
+  id          String        @id @default(cuid())
+  epochId     Int
+  startLedger Int
+  endLedger   Int
+  sizeBytes   BigInt?
+  checksum    String?
+  merkleRoot  String?
+  nodeId      String
+  node        ArchivalNode  @relation(fields: [nodeId], references: [id])
+  status      EpochStatus   @default(stored)
+  verifiedAt  DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  challenges  StorageChallenge[]
+  retrievals  DataRetrieval[]
+
+  @@index([nodeId])
+  @@index([epochId])
+  @@index([status])
+  @@map("archival_epochs")
+}
+
+model StorageChallenge {
+  id            String          @id @default(cuid())
+  epochId       String
+  epoch         ArchivalEpoch   @relation(fields: [epochId], references: [id])
+  nodeId        String
+  node          ArchivalNode    @relation(fields: [nodeId], references: [id])
+  challengeType String
+  challengeData Json?
+  responseData  Json?
+  status        ChallengeStatus @default(pending)
+  attempts      Int             @default(0)
+  proofVerified Boolean?
+  slashed       Boolean         @default(false)
+  issuedAt      DateTime        @default(now())
+  respondedAt   DateTime?
+  verifiedAt    DateTime?
+
+  slashes       ArchivalSlash[]
+
+  @@index([nodeId])
+  @@index([epochId])
+  @@index([status])
+  @@map("storage_challenges")
+}
+
+model DataRetrieval {
+  id           String          @id @default(cuid())
+  requester    String
+  epochId      String?
+  epoch        ArchivalEpoch?  @relation(fields: [epochId], references: [id])
+  nodeId       String?
+  node         ArchivalNode?   @relation(fields: [nodeId], references: [id])
+  ledgerRange  Json?
+  contractId   String?
+  fee          Float
+  feeAsset     String
+  status       RetrievalStatus
+  responseSize Int?
+  responseTime Int?
+  error        String?
+  createdAt    DateTime        @default(now())
+  completedAt  DateTime?
+
+  @@index([requester])
+  @@index([epochId])
+  @@index([nodeId])
+  @@index([status])
+  @@map("data_retrievals")
+}
+
+model SlaOffer {
+  id          String        @id @default(cuid())
+  nodeId      String
+  node        ArchivalNode  @relation(fields: [nodeId], references: [id])
+  tier        String
+  uptime      Float
+  responseMs  Int
+  description String?
+  pricePerGb  Float
+  active      Boolean       @default(true)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  acceptances SlaAcceptance[]
+
+  @@index([nodeId])
+  @@index([tier])
+  @@map("sla_offers")
+}
+
+model SlaAcceptance {
+  id          String    @id @default(cuid())
+  offerId     String
+  offer       SlaOffer  @relation(fields: [offerId], references: [id])
+  requester   String
+  fee         Float
+  status      String    @default("active")
+  createdAt   DateTime  @default(now())
+
+  @@index([offerId])
+  @@index([requester])
+  @@map("sla_acceptances")
+}
+
+model ArchivalSlash {
+  id            String            @id @default(cuid())
+  nodeId        String
+  node          ArchivalNode      @relation(fields: [nodeId], references: [id])
+  challengeId   String?
+  challenge     StorageChallenge? @relation(fields: [challengeId], references: [id])
+  amount        Float
+  reason        String
+  createdAt     DateTime          @default(now())
+
+  appeals       ArchivalAppeal[]
+
+  @@index([nodeId])
+  @@index([challengeId])
+  @@map("archival_slashes")
+}
+
+model ArchivalAppeal {
+  id         String        @id @default(cuid())
+  slashId    String
+  slash      ArchivalSlash @relation(fields: [slashId], references: [id])
+  reason     String
+  evidence   Json?
+  status     String        @default("pending")
+  decision   String?
+  createdAt  DateTime      @default(now())
+  resolvedAt DateTime?
+
+  @@index([slashId])
+  @@map("archival_appeals")
+}
+
+// =========================================================================
+// Migration: 20260623000000_nft_collection_engine
+// NFT Collection Discovery, Rarity Engine, Marketplace Analytics & Portfolio Tracker
+// =========================================================================
+
+model NftCollection {
+  id               String    @id @default(cuid())
+  contractAddress  String    @unique
+  name             String?
+  symbol           String?
+  description      String?
+  category         String?   // "art" | "gaming" | "music" | "pfp" | "collectible" | "virtual-land" | "domain" | "soulbound"
+  totalSupply      Int       @default(0)
+  uniqueHolders    Int       @default(0)
+  floorPrice       Decimal?
+  floorPriceToken  String?
+  floorPriceUsd    Decimal?
+  totalVolume      Decimal   @default(0)
+  volume24h        Decimal   @default(0)
+  volume7d         Decimal   @default(0)
+  volume30d        Decimal   @default(0)
+  avgPrice24h      Decimal?
+  avgPrice7d       Decimal?
+  marketCap        Decimal?
+  mintPrice        Decimal?
+  mintStart        DateTime?
+  mintEnd          DateTime?
+  royaltyPct       Float?
+  royaltyRecipient String?
+  website          String?
+  discord          String?
+  twitter          String?
+  logoUri          String?
+  bannerUri        String?
+  isVerified       Boolean   @default(false)
+  isSpam           Boolean   @default(false)
+  isMintable       Boolean   @default(false)
+  detectedAt       DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  lastSaleAt       DateTime?
+
+  items   NftItem[]
+  traits  NftTrait[]
+  sales   NftSale[]
+  listings NftListing[]
+  stats   NftCollectionStats[]
+  activity NftActivity[]
+
+  @@index([volume24h(sort: Desc)])
+  @@index([volume7d(sort: Desc)])
+  @@index([uniqueHolders(sort: Desc)])
+  @@index([marketCap(sort: Desc)])
+  @@index([floorPrice(sort: Desc)])
+  @@index([category])
+}
+
+model NftItem {
+  id                String    @id @default(cuid())
+  collectionId      String
+  tokenId           String
+  owner             String
+  mintedAt          DateTime
+  mintTxHash        String
+  mintPrice         Decimal?
+  lastSalePrice     Decimal?
+  lastSalePriceUsd  Decimal?
+  lastSaleAt        DateTime?
+  saleCount         Int       @default(0)
+  metadata          Json?
+  metadataUri       String?
+  metadataFetchedAt DateTime?
+  rarityScore       Float?
+  rarityRank        Int?
+  isListed          Boolean   @default(false)
+  listingPrice      Decimal?
+  listingMarket     String?
+  isSoulbound       Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  collection NftCollection @relation(fields: [collectionId], references: [id])
+
+  @@unique([collectionId, tokenId])
+  @@index([owner])
+  @@index([rarityScore(sort: Desc)])
+  @@index([lastSaleAt(sort: Desc)])
+  @@index([collectionId])
+}
+
+model NftTrait {
+  id           String  @id @default(cuid())
+  collectionId String
+  traitType    String
+  traitValue   String
+  count        Int     @default(0)
+  rarityScore  Float?
+  rarityTier   String? // "common" | "uncommon" | "rare" | "epic" | "legendary" | "mythic"
+
+  collection NftCollection @relation(fields: [collectionId], references: [id])
+
+  @@unique([collectionId, traitType, traitValue])
+  @@index([collectionId])
+}
+
+model NftSale {
+  id             String    @id @default(cuid())
+  collectionId   String
+  itemId         String?
+  tokenId        String
+  seller         String
+  buyer          String
+  price          Decimal
+  priceUsd       Decimal?
+  priceToken     String?
+  txHash         String    @unique
+  ledgerSequence Int?
+  marketplace    String?
+  saleType       String    // "sale" | "offer" | "auction" | "bid"
+  saleAt         DateTime
+  indexedAt      DateTime  @default(now())
+  isWashTrade    Boolean   @default(false)
+  washTradeScore Float?
+
+  collection NftCollection @relation(fields: [collectionId], references: [id])
+
+  @@index([collectionId, saleAt])
+  @@index([seller])
+  @@index([buyer])
+  @@index([isWashTrade])
+}
+
+model NftListing {
+  id           String    @id @default(cuid())
+  collectionId String
+  itemId       String
+  tokenId      String
+  seller       String
+  price        Decimal
+  priceUsd     Decimal?
+  priceToken   String?
+  marketplace  String?
+  listedAt     DateTime
+  expiresAt    DateTime?
+  status       String    // "active" | "cancelled" | "sold"
+  cancelledAt  DateTime?
+
+  collection NftCollection @relation(fields: [collectionId], references: [id])
+
+  @@index([collectionId, status])
+  @@index([seller])
+}
+
+model NftCollectionStats {
+  id             String    @id @default(cuid())
+  collectionId   String
+  timestamp      DateTime
+  floorPrice     Decimal?
+  floorPriceUsd  Decimal?
+  totalVolume    Decimal
+  volume24h      Decimal
+  avgPrice24h    Decimal?
+  uniqueHolders  Int
+  totalSupply    Int
+  washVolume24h  Decimal   @default(0)
+  washTxCount24h Int       @default(0)
+
+  collection NftCollection @relation(fields: [collectionId], references: [id])
+
+  @@unique([collectionId, timestamp])
+  @@index([collectionId, timestamp(sort: Desc)])
+}
+
+model NftPortfolio {
+  id               String    @id @default(cuid())
+  userId           String
+  owner            String
+  name             String?
+  items            String[]  @default([])
+  totalValueUsd    Decimal?
+  totalPaidUsd     Decimal?
+  unrealizedPnlUsd Decimal?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([owner])
+}
+
+model NftActivity {
+  id             String    @id @default(cuid())
+  collectionId   String
+  itemId         String?
+  tokenId        String
+  activityType   String    // "mint" | "transfer" | "sale" | "offer" | "list" | "cancel" | "burn" | "bid"
+  fromAddress    String?
+  toAddress      String?
+  price          Decimal?
+  priceUsd       Decimal?
+  txHash         String
+  ledgerSequence Int?
+  occurredAt     DateTime
+  metadata       Json?
+
+  collection NftCollection @relation(fields: [collectionId], references: [id])
+
+  @@index([collectionId, occurredAt(sort: Desc)])
+  @@index([activityType, occurredAt(sort: Desc)])
+  @@index([txHash])
+}
+
+model NftMarketplace {
+  id               String    @id @default(cuid())
+  contractAddress  String    @unique
+  name             String?
+  description      String?
+  website          String?
+  logoUri          String?
+  totalVolume      Decimal   @default(0)
+  volume24h        Decimal   @default(0)
+  totalListings    Int       @default(0)
+  activeListings   Int       @default(0)
+  uniqueCollections Int      @default(0)
+  activeTraders24h Int       @default(0)
+  feePct           Float?
+  isVerified       Boolean   @default(false)
+  isActive         Boolean   @default(true)
+  detectedAt       DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([isActive])
+}
+model ApiAuditLog {
+  id                 String   @id @default(cuid())
+  apiKeyId           String?
+  keyName            String?
+  tier               String   @default("unauthenticated")
+  ip                 String
+  method             String
+  endpoint           String
+  statusCode         Int
+  responseTimeMs     Int      @default(0)
+  rateLimitRemaining Int?
+  rateLimitLimit     Int?
+  userAgent          String?
+  requestId          String?
+  region             String?
+  isRateLimited      Boolean  @default(false)
+  month              String   // "YYYY-MM" — matches partition key
+  createdAt          DateTime @default(now())
+
+  @@index([apiKeyId])
+  @@index([ip])
+  @@index([createdAt(sort: Desc)])
+  @@index([endpoint])
+  @@index([isRateLimited])
+}
+
+model AbuseEvent {
+  id           String    @id @default(cuid())
+  pattern      String    // "credential_stuffing" | "scraping" | "ddos" | "sequential_pagination" | "rapid_auth_failure"
+  ip           String?
+  apiKeyId     String?
+  endpoint     String?
+  score        Float     @default(0)
+  action       String    @default("monitor") // "monitor" | "throttle" | "block" | "captcha"
+  blockedUntil DateTime?
+  evidence     Json?
+  resolvedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([ip])
+  @@index([apiKeyId])
+  @@index([pattern])
+  @@index([createdAt(sort: Desc)])
+  @@index([blockedUntil])
+}
+model BridgeTransaction {
+  id                    String   @id @default(uuid())
+  transactionHash       String   @unique
+  sourceChain           String   @db.VarChar(50)
+  destinationChain      String   @db.VarChar(50)
+  asset                 String   @db.VarChar(50)
+  amount                Decimal  @db.Decimal(30, 7)
+  sender                String   @db.VarChar(100)
+  recipient             String   @db.VarChar(100)
+  protocol              String   @db.VarChar(50)
+  status                String   @default("pending") @db.VarChar(20)
+  confirmations         Int      @default(0)
+  requiredConfirmations Int      @default(0)
+  sourceTimestamp       DateTime?
+  destinationTimestamp  DateTime?
+  estimatedArrivalAt    DateTime?
+  bridgeFee             Decimal? @db.Decimal(20, 7)
+  sourceTxUrl           String?
+  destinationTxUrl      String?
+  metadata              Json?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([protocol])
+  @@index([sourceChain])
+  @@index([destinationChain])
+  @@index([status])
+  @@index([sender])
+  @@index([recipient])
+  @@index([createdAt])
+  @@map("bridge_transactions")
+}
+
+model BridgeAlert {
+  id              String   @id @default(uuid())
+  type            String   @db.VarChar(50)
+  severity        String   @default("info") @db.VarChar(20)
+  protocol        String?  @db.VarChar(50)
+  chain           String?  @db.VarChar(50)
+  address         String?  @db.VarChar(100)
+  transactionHash String?  @db.VarChar(100)
+  asset           String?  @db.VarChar(50)
+  amount          Decimal? @db.Decimal(30, 7)
+  message         String   @db.Text
+  data            Json?
+  acknowledged    Boolean  @default(false)
+  triggeredAt     DateTime @default(now())
+
+  @@index([type])
+  @@index([severity])
+  @@index([address])
+  @@index([triggeredAt])
+  @@map("bridge_alerts")
+}
+
+model MonitoredAddress {
+  id           String   @id @default(uuid())
+  address      String   @db.VarChar(100)
+  chain        String   @db.VarChar(50)
+  label        String?
+  minAlertUsd  Decimal? @db.Decimal(20, 2)
+  alertOnTx    Boolean  @default(true)
+  alertOnBridging Boolean @default(true)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([address, chain])
+  @@index([address])
+  @@index([chain])
+  @@map("monitored_addresses")
+}
+
+model BridgeVolume {
+  id          String   @id @default(uuid())
+  protocol    String   @db.VarChar(50)
+  chain       String   @db.VarChar(50)
+  asset       String   @db.VarChar(50)
+  volume      Decimal  @db.Decimal(30, 7)
+  count       Int      @default(0)
+  period      String   @db.VarChar(20)
+  periodStart DateTime
+  createdAt   DateTime @default(now())
+
+  @@unique([protocol, chain, asset, period, periodStart])
+  @@index([protocol, period])
+  @@index([chain, period])
+  @@index([periodStart])
+  @@map("bridge_volumes")
+}
+
+// ── Auth models ───────────────────────────────────────────────────────────────
+
+model WalletUser {
+  id          String    @id @default(cuid())
+  address     String    @unique
+  role        String    @default("user")
+  tier        String    @default("free")
+  displayName String?
+  email       String?
+  avatarUrl   String?
+  isActive    Boolean   @default(true)
+  isMultiSig  Boolean   @default(false)
+  metadata    Json      @default("{}")
+  lastLogin   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  sessions AuthSession[]
+  events   AuthEvent[]
+  webhooks AuthWebhook[]
+
+  @@index([address])
+  @@map("wallet_users")
+}
+
+model AuthSession {
+  id                String    @id
+  userId            String
+  tokenHash         String
+  refreshTokenHash  String
+  deviceInfo        Json?
+  appId             String?
+  isActive          Boolean   @default(true)
+  revokedAt         DateTime?
+  revocationReason  String?
+  lastActivity      DateTime  @default(now())
+  expiresAt         DateTime
+  createdAt         DateTime  @default(now())
+
+  user WalletUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@index([refreshTokenHash])
+  @@map("auth_sessions")
+}
+
+model AuthEvent {
+  id        String   @id @default(cuid())
+  userId    String
+  sessionId String?
+  eventType String
+  ipAddress String?
+  userAgent String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  user WalletUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([eventType])
+  @@index([createdAt])
+  @@map("auth_events")
+}
+
+model AuthWebhook {
+  id        String   @id @default(cuid())
+  userId    String
+  url       String
+  events    Json
+  secret    String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  user WalletUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("auth_webhooks")
+}
+
+model MultiSigWallet {
+  id            String   @id @default(cuid())
+  walletAddress String   @unique
+  signers       Json
+  threshold     Int
+  description   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("multisig_wallets")
+}
+
+model OAuthApp {
+  id           String   @id @default(cuid())
+  clientId     String   @unique
+  clientSecret String
+  name         String
+  redirectUris Json
+  scopes       Json
+  ownerId      String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  @@index([ownerId])
+  @@map("oauth_apps")
+}
+
+model OAuthCode {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  clientId    String
+  userId      String
+  redirectUri String
+  scopes      Json
+  used        Boolean  @default(false)
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([clientId])
+  @@index([userId])
+  @@map("oauth_codes")
+}
+
+// ── Universal ABI Extraction (#289) ──────────────────────────────────────────
+
+model WasmAbiExtract {
+  id              String   @id @default(cuid())
+  contractAddress String   @unique
+  source          String   // on-chain-spec | inferred | sep-matched | generic | manual
+  functions       Json     // ExtractedFunction[]
+  exports         Json     // WasmExport[]
+  imports         Json     // WasmImport[]
+  sepStandards    String[]
+  coverageScore   Float    @default(0)
+  warnings        String[]
+  wasmHash        String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([contractAddress])
+  @@index([source])
+  @@map("wasm_abi_extracts")
+}
+
+model AbiCoverageReport {
+  id                   String   @id @default(cuid())
+  contractAddress      String
+  totalCalls           Int
+  matchedCalls         Int
+  coveragePercent      Float
+  falsePositives       String[]
+  falseNegatives       String[]
+  confidenceByFunction Json
+  createdAt            DateTime @default(now())
+
+  @@index([contractAddress])
+  @@index([createdAt])
+  @@map("abi_coverage_reports")
+}
+
+model AbiCommunityContribution {
+  id           String   @id @default(cuid())
+  address      String
+  functionName String
+  params       Json
+  returns      String
+  contributor  String?
+  approved     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  @@index([address])
+  @@map("abi_community_contributions")
+}
+

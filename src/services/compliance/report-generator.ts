@@ -1,3 +1,4 @@
+import { prismaRead, prismaWrite } from '../../db';
 import { recordAudit } from './audit';
 
 interface ReportParams {
@@ -23,11 +24,11 @@ export async function generateReport(params: ReportParams): Promise<any> {
   });
 
   const totalScreenings = screeningData.length;
-  const matches = screeningData.filter(s => s.status !== 'clear');
-  const blocked = screeningData.filter(s => s.status === 'blocked');
-  const highRisk = screeningData.filter(s => s.status === 'high_risk');
-  const falsePositives = screeningData.filter(s => s.reviewAction === 'false_positive');
-  const confirmed = screeningData.filter(s => s.reviewAction === 'confirmed_positive');
+  const matches = screeningData.filter((s) => s.status !== 'clear');
+  const blocked = screeningData.filter((s) => s.status === 'blocked');
+  const highRisk = screeningData.filter((s) => s.status === 'high_risk');
+  const falsePositives = screeningData.filter((s) => s.reviewAction === 'false_positive');
+  const confirmed = screeningData.filter((s) => s.reviewAction === 'confirmed_positive');
 
   const matchesByDay = new Map<string, number>();
   const screeningsByDay = new Map<string, number>();
@@ -47,16 +48,21 @@ export async function generateReport(params: ReportParams): Promise<any> {
     summary: {
       totalScreenings,
       totalMatches: matches.length,
-      matchRate: totalScreenings > 0 ? ((matches.length / totalScreenings) * 100).toFixed(2) : '0.00',
+      matchRate:
+        totalScreenings > 0 ? ((matches.length / totalScreenings) * 100).toFixed(2) : '0.00',
       blockedCount: blocked.length,
       highRiskCount: highRisk.length,
       falsePositives: falsePositives.length,
       confirmedMatches: confirmed.length,
-      falsePositiveRate: matches.length > 0 ? ((falsePositives.length / matches.length) * 100).toFixed(2) : '0.00',
+      falsePositiveRate:
+        matches.length > 0 ? ((falsePositives.length / matches.length) * 100).toFixed(2) : '0.00',
     },
     matchesByDay: Array.from(matchesByDay.entries()).map(([date, count]) => ({ date, count })),
-    screeningsByDay: Array.from(screeningsByDay.entries()).map(([date, count]) => ({ date, count })),
-    topMatches: matches.slice(0, 20).map(m => ({
+    screeningsByDay: Array.from(screeningsByDay.entries()).map(([date, count]) => ({
+      date,
+      count,
+    })),
+    topMatches: matches.slice(0, 20).map((m) => ({
       address: m.address,
       status: m.status,
       riskScore: m.riskScore,
@@ -203,7 +209,7 @@ export async function generateSarReport(params: {
     relatedTxHashes: params.relatedTxHashes ?? [],
     reportedBy: params.reportedBy,
     filedAt: now.toISOString(),
-    screeningHistory: screeningHistory.map(s => ({
+    screeningHistory: screeningHistory.map((s) => ({
       status: s.status,
       riskScore: s.riskScore,
       matchType: s.matchType,

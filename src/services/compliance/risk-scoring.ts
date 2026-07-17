@@ -1,3 +1,5 @@
+import { prismaRead } from '../../db';
+
 export interface RiskFactor {
   name: string;
   weight: number;
@@ -19,9 +21,18 @@ const CONTRACT_ADDRESS_REGEX = /^C[A-Z0-9]{55}$/i;
 function calculateGeographicRisk(country?: string | null): number {
   if (!country) return 0;
   const highRiskCountries = [
-    'iran', 'korea', 'syria', 'cuba', 'crimea',
-    'russia', 'belarus', 'myanmar', 'venezuela',
-    'yemen', 'sudan', 'zimbabwe',
+    'iran',
+    'korea',
+    'syria',
+    'cuba',
+    'crimea',
+    'russia',
+    'belarus',
+    'myanmar',
+    'venezuela',
+    'yemen',
+    'sudan',
+    'zimbabwe',
   ];
   const countryLower = country.toLowerCase();
   if (highRiskCountries.includes(countryLower)) return 85;
@@ -40,7 +51,7 @@ export async function assessAddressRisk(address: string): Promise<RiskAssessment
   const sanctionsScore = latestScreen?.riskScore ?? 0;
   factors.push({
     name: 'Sanctions Match Score',
-    weight: 0.40,
+    weight: 0.4,
     score: sanctionsScore,
     details: latestScreen?.matchType
       ? `Match type: ${latestScreen.matchType}, Score: ${sanctionsScore}`
@@ -54,10 +65,14 @@ export async function assessAddressRisk(address: string): Promise<RiskAssessment
   const recentTxCount = await prismaRead.transaction.count({
     where: { sourceAccount: address, createdAt: { gte: oneWeekAgo } },
   });
-  const txVelocity = recentTxCount > 50 ? Math.min(100, recentTxCount / 2)
-    : recentTxCount > 20 ? 50
-      : recentTxCount > 5 ? 25
-        : 0;
+  const txVelocity =
+    recentTxCount > 50
+      ? Math.min(100, recentTxCount / 2)
+      : recentTxCount > 20
+        ? 50
+        : recentTxCount > 5
+          ? 25
+          : 0;
   factors.push({
     name: 'Transaction Velocity',
     weight: 0.15,
@@ -70,17 +85,20 @@ export async function assessAddressRisk(address: string): Promise<RiskAssessment
     orderBy: { ledgerSequence: 'asc' },
     select: { createdAt: true },
   });
-  const accountAgeDays = firstTx
-    ? (Date.now() - firstTx.createdAt.getTime()) / 86400000
-    : 0;
-  const ageScore = accountAgeDays < 1 ? 80
-    : accountAgeDays < 7 ? 50
-      : accountAgeDays < 30 ? 25
-        : accountAgeDays < 365 ? 10
-          : 0;
+  const accountAgeDays = firstTx ? (Date.now() - firstTx.createdAt.getTime()) / 86400000 : 0;
+  const ageScore =
+    accountAgeDays < 1
+      ? 80
+      : accountAgeDays < 7
+        ? 50
+        : accountAgeDays < 30
+          ? 25
+          : accountAgeDays < 365
+            ? 10
+            : 0;
   factors.push({
     name: 'Account Age & Activity',
-    weight: 0.10,
+    weight: 0.1,
     score: ageScore,
     details: `Account age: ${Math.round(accountAgeDays)} days, total tx: ${txCount}`,
   });
@@ -91,9 +109,10 @@ export async function assessAddressRisk(address: string): Promise<RiskAssessment
   }
   factors.push({
     name: 'Link Analysis',
-    weight: 0.20,
+    weight: 0.2,
     score: linkScore,
-    details: linkScore > 0 ? 'Connected to flagged addresses' : 'No linked high-risk addresses detected',
+    details:
+      linkScore > 0 ? 'Connected to flagged addresses' : 'No linked high-risk addresses detected',
   });
 
   const isStellarAddress = STELLAR_ADDRESS_REGEX.test(address);
@@ -108,12 +127,12 @@ export async function assessAddressRisk(address: string): Promise<RiskAssessment
     name: 'Geographic Risk',
     weight: 0.15,
     score: geoScore,
-    details: isContractAddress ? 'Contract address (lower geographic risk)' : 'Standard Stellar address',
+    details: isContractAddress
+      ? 'Contract address (lower geographic risk)'
+      : 'Standard Stellar address',
   });
 
-  const overallScore = Math.round(
-    factors.reduce((sum, f) => sum + f.score * f.weight, 0),
-  );
+  const overallScore = Math.round(factors.reduce((sum, f) => sum + f.score * f.weight, 0));
 
   let riskLevel: string;
   if (overallScore >= 80) riskLevel = 'critical';
@@ -131,11 +150,9 @@ export async function assessAddressRisk(address: string): Promise<RiskAssessment
   };
 }
 
-export async function batchRiskAssessment(
-  addresses: string[],
-): Promise<RiskAssessment[]> {
+export async function batchRiskAssessment(addresses: string[]): Promise<RiskAssessment[]> {
   const batch = addresses.slice(0, 1000);
-  return Promise.all(batch.map(addr => assessAddressRisk(addr)));
+  return Promise.all(batch.map((addr) => assessAddressRisk(addr)));
 }
 
 export async function assessRiskFromScreen(

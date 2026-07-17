@@ -8,8 +8,10 @@ import {
   getTransaction,
   getTransactionFromHorizon,
   type LedgerEvent,
+  fetchLedgerMetadata,
 } from './rpc';
 import { decodeTransaction, decodeEvent } from './decoder';
+import { processAaTransaction } from './aa-indexer';
 import { feedOrchestrator } from '../feed/orchestrator';
 
 const BATCH = config.indexerBatchSize;
@@ -19,7 +21,7 @@ const WORKERS = config.indexerCatchupWorkers;
 // IndexerState helpers
 // ---------------------------------------------------------------------------
 
-async function getLastIndexedLedger(): Promise<number> {
+export async function getLastIndexedLedger(): Promise<number> {
   const state = await prisma.indexerState.upsert({
     where: { id: 'singleton' },
     update: {},
@@ -28,7 +30,7 @@ async function getLastIndexedLedger(): Promise<number> {
   return state.lastLedger;
 }
 
-async function setLastIndexedLedger(ledger: number): Promise<void> {
+export async function setLastIndexedLedger(ledger: number): Promise<void> {
   await prisma.indexerState.upsert({
     where: { id: 'singleton' },
     update: { lastLedger: ledger },
@@ -36,8 +38,98 @@ async function setLastIndexedLedger(ledger: number): Promise<void> {
   });
 }
 
-async function processLedgerRange(start: number, end: number) {
+export async function rollbackLedgers(sequences: number[]) {
+  console.log(`⚠️ Rollback triggered for ledgers: ${sequences.join(', ')}`);
+
+  await prisma.$transaction([
+    // Delete SessionAuthorizations related to these ledgers
+    prisma.sessionAuthorization.deleteMany({
+      where: {
+        startLedger: { in: sequences },
+      },
+    }),
+
+    // Delete Events for these ledgers
+    prisma.event.deleteMany({
+      where: {
+        ledgerSequence: { in: sequences },
+      },
+    }),
+
+    // Delete Transactions for these ledgers
+    prisma.transaction.deleteMany({
+      where: {
+        ledgerSequence: { in: sequences },
+      },
+    }),
+
+    // Delete WasmUpgradeHistory for these ledgers
+    prisma.wasmUpgradeHistory.deleteMany({
+      where: {
+        ledgerSequence: { in: sequences },
+      },
+    }),
+
+    // Delete Ledgers themselves
+    prisma.ledger.deleteMany({
+      where: {
+        sequence: { in: sequences },
+      },
+    }),
+  ]);
+}
+
+export async function processLedgerRange(start: number, end: number) {
   console.log(`Indexing ledgers ${start} → ${end}`);
+
+  // 1. Fetch metadata and check reorgs sequentially for all ledgers in the range first
+  for (let seq = start; seq <= end; seq++) {
+    const ledgerMeta = await fetchLedgerMetadata(seq);
+
+    // Reorg check
+    const prevSeq = seq - 1;
+    const prevLedger = await prisma.ledger.findUnique({ where: { sequence: prevSeq } });
+    if (prevLedger && prevLedger.hash !== ledgerMeta.previousLedgerHash) {
+      console.warn(
+        `🚨 REORG DETECTED at ledger ${seq}! Expected prev hash ${prevLedger.hash}, but network says ${ledgerMeta.previousLedgerHash}`,
+      );
+
+      await prisma.reorgEvent.create({
+        data: {
+          ledgerSequence: seq,
+          expectedHash: prevLedger.hash,
+          actualHash: ledgerMeta.previousLedgerHash,
+          previousHash: prevLedger.previousLedgerHash ?? '',
+          rolledBackLedgers: [prevSeq],
+        },
+      });
+
+      await rollbackLedgers([prevSeq]);
+      await setLastIndexedLedger(prevSeq - 1);
+
+      throw new Error(`Reorg detected at ledger ${seq}. Rolled back ${prevSeq}.`);
+    }
+
+    // Save/upsert Ledger record
+    await prisma.ledger.upsert({
+      where: { sequence: seq },
+      update: {
+        hash: ledgerMeta.hash,
+        previousLedgerHash: ledgerMeta.previousLedgerHash,
+        closeTime: ledgerMeta.closeTime,
+        txCount: ledgerMeta.txCount,
+      },
+      create: {
+        sequence: seq,
+        hash: ledgerMeta.hash,
+        previousLedgerHash: ledgerMeta.previousLedgerHash,
+        closeTime: ledgerMeta.closeTime,
+        txCount: ledgerMeta.txCount,
+      },
+    });
+  }
+
+  // 2. Fetch events for the range and process them normally
   const events = await fetchEvents(start, end);
 
   for (const event of events) {
@@ -82,12 +174,29 @@ async function processLedgerRange(start: number, end: number) {
         },
       });
 
+      // Trigger Account Abstraction processing (non-blocking)
+      try {
+        void processAaTransaction(
+          transaction.hash,
+          transaction.sourceAccount,
+          rawXdr,
+          transaction.ledgerSequence,
+          transaction.ledgerCloseTime,
+          transaction.feeCharged ?? undefined,
+        );
+      } catch (err) {
+        console.error('AA processing error:', err);
+      }
+
       // Publish to feed
       await feedOrchestrator.publishTransaction(transaction).catch(console.error);
     }
 
     const { eventType, decoded } = decodeEvent(event.topics, event.data);
-    const eventId = `${event.transactionHash}-${event.topics[0] ?? '0'}`;
+    // Include paging token (unique per event position) to prevent ID collisions
+    // when a single transaction emits multiple events with the same first topic.
+    const positionKey = event.pagingToken || `${event.ledgerSequence}-${events.indexOf(event)}`;
+    const eventId = `${event.transactionHash}-${positionKey}`;
     const savedEvent = await prisma.event.upsert({
       where: { id: eventId },
       update: {},
@@ -289,21 +398,42 @@ function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
+let currentWorker: SorobanEventWorker | null = null;
+
 export async function runIndexer() {
   await startIndexerService();
 }
 
 export async function startIndexerService() {
   const worker = new SorobanEventWorker();
+  currentWorker = worker;
   await worker.start();
 }
 
-class SorobanEventWorker {
+export function stopIndexerService(): void {
+  if (currentWorker) {
+    currentWorker.stop();
+    currentWorker = null;
+  }
+}
+
+export class SorobanEventWorker {
   private websocket?: WebSocket;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
   private reconnectDelayMs = 1000;
   private isProcessing = false;
   private shouldStop = false;
+
+  stop(): void {
+    this.shouldStop = true;
+    if (this.websocket) {
+      this.websocket.close();
+    }
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+  }
 
   async start() {
     console.log('🔍 Soroban event worker starting...');
@@ -333,6 +463,54 @@ class SorobanEventWorker {
       while (true) {
         const last = await getLastIndexedLedger();
         if (last >= targetLedger) return;
+
+        // --- GAP DETECTION & BACKFILL ---
+        if (last < targetLedger - 1) {
+          const gapStart = last + 1;
+          const gapEnd = targetLedger - 1;
+          console.warn(
+            `⚠️ Ledger gap detected: expected next ledger to be ${targetLedger}, but last indexed is ${last}. Gap range: ${gapStart} → ${gapEnd}`,
+          );
+
+          // Record LedgerGap in the database
+          await prisma.ledgerGap.create({
+            data: {
+              startSequence: gapStart,
+              endSequence: gapEnd,
+              resolved: false,
+            },
+          });
+
+          // Attempt to backfill the gap
+          try {
+            console.log(`🔄 Attempting to backfill gap ${gapStart} → ${gapEnd}...`);
+            if (gapEnd - gapStart >= BATCH && WORKERS > 1) {
+              await catchUp(gapStart, gapEnd);
+            } else {
+              await processLedgerRange(gapStart, gapEnd);
+              await setLastIndexedLedger(gapEnd);
+            }
+
+            // Mark the gap as resolved
+            await prisma.ledgerGap.updateMany({
+              where: {
+                startSequence: gapStart,
+                endSequence: gapEnd,
+                resolved: false,
+              },
+              data: { resolved: true },
+            });
+            console.log(
+              `✅ Ledger gap ${gapStart} → ${gapEnd} successfully backfilled and resolved.`,
+            );
+          } catch (backfillErr) {
+            console.error(`❌ Failed to backfill ledger gap ${gapStart} → ${gapEnd}:`, backfillErr);
+            throw backfillErr;
+          }
+
+          // Refresh last indexed ledger after backfill
+          continue;
+        }
 
         const gap = targetLedger - last;
         if (gap > BATCH && WORKERS > 1) {

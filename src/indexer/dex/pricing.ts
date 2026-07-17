@@ -12,7 +12,17 @@
 import { prismaWrite, prismaRead } from '../../db';
 
 /** Symbols treated as USD stablecoins (≈ $1.00). */
-const STABLE_SYMBOLS = new Set(['USDC', 'USDT', 'DAI', 'USDX', 'USDD', 'BUSD', 'GUSD', 'USD', 'USDGLO']);
+const STABLE_SYMBOLS = new Set([
+  'USDC',
+  'USDT',
+  'DAI',
+  'USDX',
+  'USDD',
+  'BUSD',
+  'GUSD',
+  'USD',
+  'USDGLO',
+]);
 
 export function isStableSymbol(symbol: string | null | undefined): boolean {
   return symbol != null && STABLE_SYMBOLS.has(symbol.toUpperCase());
@@ -118,15 +128,17 @@ export async function refreshTokenPrices(): Promise<Map<string, PricedToken>> {
     },
   });
 
-  const pricingPools: PricingPool[] = pools.map((p) => ({
-    poolAddress: p.poolAddress,
-    tokenA: p.tokenA,
-    tokenB: p.tokenB,
-    symbolA: p.tokenASymbol,
-    symbolB: p.tokenBSymbol,
-    reserveAHuman: Number(BigInt(p.reserveA)) / 10 ** p.tokenADecimals,
-    reserveBHuman: Number(BigInt(p.reserveB)) / 10 ** p.tokenBDecimals,
-  }));
+  const pricingPools: PricingPool[] = pools
+    .filter((p): p is typeof p & { poolAddress: string } => p.poolAddress !== null)
+    .map((p) => ({
+      poolAddress: p.poolAddress,
+      tokenA: p.tokenA,
+      tokenB: p.tokenB,
+      symbolA: p.tokenASymbol,
+      symbolB: p.tokenBSymbol,
+      reserveAHuman: Number(p.reserveA ?? 0) / 10 ** (p.tokenADecimals ?? 7),
+      reserveBHuman: Number(p.reserveB ?? 0) / 10 ** (p.tokenBDecimals ?? 7),
+    }));
 
   const prices = deriveTokenPrices(pricingPools);
 
@@ -142,7 +154,6 @@ export async function refreshTokenPrices(): Promise<Map<string, PricedToken>> {
         where: { tokenAddress },
         create: {
           tokenAddress,
-          symbol: symbolByToken.get(tokenAddress) ?? null,
           priceUsd: priced.priceUsd,
           source: priced.source,
           confidence: priced.confidence,
@@ -165,5 +176,5 @@ export async function getTokenPriceUsd(tokenAddress: string): Promise<number | n
     where: { tokenAddress },
     select: { priceUsd: true },
   });
-  return row?.priceUsd ?? null;
+  return row?.priceUsd ? Number(row.priceUsd) : null;
 }

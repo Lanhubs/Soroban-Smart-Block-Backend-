@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { prismaRead, prismaWrite } from '../db';
 import { z } from 'zod';
 import { abiRouter } from './abi';
+import { archiveRouter } from './archive';
 import { validateAddressParam, isValidStellarAddress } from '../middleware/sanitize';
 import { asyncHandler } from '../middleware/asyncHandler';
 
@@ -15,6 +16,7 @@ import { asyncHandler } from '../middleware/asyncHandler';
 export const contractRouter = Router();
 
 contractRouter.use('/:address/abi', abiRouter);
+contractRouter.use('/:address/state', archiveRouter);
 
 const abiSchema = z.object({
   address: z
@@ -239,7 +241,7 @@ contractRouter.get(
 contractRouter.get(
   '/:address',
   validateAddressParam('address'),
-  async (req: Request, res: Response) => {
+  asyncHandler(async (req: Request, res: Response) => {
     const contract = await prismaRead.contract.findUnique({
       where: { address: req.params.address },
       include: {
@@ -257,7 +259,7 @@ contractRouter.get(
     });
     if (!contract) return res.status(404).json({ error: 'Contract not found' });
     res.json(contract);
-  },
+  }),
 );
 
 /**

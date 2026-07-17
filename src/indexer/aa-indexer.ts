@@ -16,11 +16,20 @@ import {
   extractWasmAaIndicators,
   buildAuthDecomposition,
   isContractAddress,
+  refineBehaviorClassification,
+  extractSessionKeysFromAuth,
+  type WalletBehaviorProfile,
 } from './aa-classifier';
+import { inspectSignature } from './signatureInspector';
+import { inspectCustomAccount } from './customAccountInspector';
+import { broadcastEvent } from '../ws/eventBroadcaster';
 
 // Per-process in-memory cache: wasmHash → indicators.
 // Avoids repeated RPC fetches for the same contract within a catch-up batch.
-const wasmCache = new Map<string, ReturnType<typeof extractWasmAaIndicators> & { threshold: number | null }>();
+const wasmCache = new Map<
+  string,
+  ReturnType<typeof extractWasmAaIndicators> & { threshold: number | null }
+>();
 
 /**
  * Fetch WASM for a contract address, extract AA indicators AND threshold.
@@ -95,7 +104,9 @@ export async function processAaTransaction(
   const functionName = parsed?.functionName ?? null;
 
   // 2. Fetch WASM indicators for contract-source accounts
-  let wasmResult: (ReturnType<typeof extractWasmAaIndicators> & { threshold: number | null }) | null = null;
+  let wasmResult:
+    | (ReturnType<typeof extractWasmAaIndicators> & { threshold: number | null })
+    | null = null;
   if (isContractAddress(sourceAccount)) {
     const contract = await prisma.contract.findUnique({
       where: { address: sourceAccount },
@@ -110,7 +121,12 @@ export async function processAaTransaction(
   }
 
   // 3. Classify the wallet
-  const classification = classifyWallet(sourceAccount, authEntries, functionName, wasmResult ?? undefined);
+  const classification = classifyWallet(
+    sourceAccount,
+    authEntries,
+    functionName,
+    wasmResult ?? undefined,
+  );
 
   // Apply threshold from WASM spec if available and not already set
   if (wasmResult?.threshold !== null && wasmResult?.threshold !== undefined) {
@@ -122,8 +138,13 @@ export async function processAaTransaction(
     const sponsorInfo = extractSponsorInfo(rawXdr);
     if (sponsorInfo.isFeeSponsored) {
       await recordSponsoredTransaction(
-        transactionHash, sponsorInfo.sponsorAccount!, sponsorInfo.sourceAccount!,
-        null, feeCharged, ledgerSequence, ledgerCloseTime,
+        transactionHash,
+        sponsorInfo.sponsorAccount!,
+        sponsorInfo.sourceAccount!,
+        null,
+        feeCharged,
+        ledgerSequence,
+        ledgerCloseTime,
       );
     }
     return;
@@ -131,7 +152,17 @@ export async function processAaTransaction(
 
   const walletAddress = isContractAddress(sourceAccount) ? sourceAccount : null;
 
-  // 4. Enrich session key expiry from SessionAuthorization records
+  // 4. Extract session keys directly from auth entries (hot signers authorizing on behalf of wallet)
+  const authSessionKeys = extractSessionKeysFromAuth(sourceAccount, authEntries);
+  if (authSessionKeys.length > 0) {
+    // Merge with classifier-found session keys (dedup by address)
+    const existing = new Set(classification.sessionKeys.map((s) => s.address));
+    for (const sk of authSessionKeys) {
+      if (!existing.has(sk.address)) classification.sessionKeys.push(sk);
+    }
+  }
+
+  // 5. Enrich session key expiry from SessionAuthorization records
   if (classification.sessionKeys.length > 0) {
     const sessionAuths = await prisma.sessionAuthorization.findMany({
       where: { contractAddress: walletAddress ?? sourceAccount },
@@ -143,9 +174,62 @@ export async function processAaTransaction(
     for (const sk of classification.sessionKeys) {
       sk.expiryLedger = expiryMap.get(sk.address) ?? null;
     }
+
+    // Write any new session keys discovered in this transaction back to SessionAuthorization
+    for (const sk of authSessionKeys) {
+      await prisma.sessionAuthorization
+        .upsert({
+          where: { eventId: `${transactionHash}:${sk.address}` },
+          update: {},
+          create: {
+            eventId: `${transactionHash}:${sk.address}`,
+            contractAddress: walletAddress ?? sourceAccount,
+            hotSigner: sk.address,
+            authorizationType: 'session_key',
+            startLedger: ledgerSequence,
+            expiryLedger: sk.expiryLedger ?? ledgerSequence + 17280, // default ~24 h
+            allocatedBlocks: 17280,
+          },
+        })
+        .catch(() => undefined);
+    }
   }
 
-  // 5. Upsert SmartWallet
+  // 6. Behavioral refinement — fetch call-count profile after ≥5 transactions
+  let isNewWallet = false;
+  const existingWallet = await prisma.smartWallet.findUnique({
+    where: { address: walletAddress ?? sourceAccount },
+    select: { txCount: true },
+  });
+  isNewWallet = !existingWallet;
+
+  if (existingWallet && existingWallet.txCount >= 5 && walletAddress) {
+    const callRows = await prisma.$queryRaw<{ fn: string; cnt: bigint }[]>`
+      SELECT "functionName" AS fn, COUNT(*) AS cnt
+      FROM "Transaction"
+      WHERE "sourceAccount" = ${walletAddress}
+      GROUP BY "functionName"
+    `;
+    const callCounts: Record<string, number> = {};
+    let totalSigners = 0;
+    for (const row of callRows) {
+      if (row.fn) callCounts[row.fn] = Number(row.cnt);
+    }
+    // observedSignerCount: count distinct auth addresses across recent decompositions
+    const signerRows = await prisma.$queryRaw<{ cnt: bigint }[]>`
+      SELECT COUNT(DISTINCT signer) AS cnt
+      FROM "AuthDecomposition", jsonb_array_elements_text("authTree"::jsonb) AS t(signer)
+      WHERE "walletAddress" = ${walletAddress}
+    `.catch(() => [{ cnt: BigInt(classification.signerCount ?? 1) }]);
+    totalSigners = Number(signerRows[0]?.cnt ?? classification.signerCount ?? 1);
+
+    const profile: WalletBehaviorProfile = { callCounts, observedSignerCount: totalSigners };
+    const refined = refineBehaviorClassification(classification, profile);
+    classification.walletType = refined.walletType;
+    classification.authMethods = refined.authMethods;
+  }
+
+  // 7. Upsert SmartWallet
   await prisma.smartWallet.upsert({
     where: { address: walletAddress ?? sourceAccount },
     update: {
@@ -170,21 +254,30 @@ export async function processAaTransaction(
       authMethods: classification.authMethods,
       deployedAtLedger: ledgerSequence,
       deployedByAccount: isContractAddress(sourceAccount) ? null : sourceAccount,
-      wasmHash: wasmResult ? (await prisma.contract.findUnique({
-        where: { address: sourceAccount },
-        select: { wasmHash: true },
-      }))?.wasmHash ?? undefined : undefined,
+      wasmHash: wasmResult
+        ? ((
+            await prisma.contract.findUnique({
+              where: { address: sourceAccount },
+              select: { wasmHash: true },
+            })
+          )?.wasmHash ?? undefined)
+        : undefined,
       firstSeenLedger: ledgerSequence,
       lastSeenLedger: ledgerSequence,
       txCount: 1,
     },
   });
 
-  // 6. Auth decomposition
+  // 8. Auth decomposition
   if (authEntries.length > 0) {
     const decomp = buildAuthDecomposition(
-      transactionHash, sourceAccount, authEntries, classification, ledgerSequence,
-      functionName, parsed?.contractId ?? null,
+      transactionHash,
+      sourceAccount,
+      authEntries,
+      classification,
+      ledgerSequence,
+      functionName,
+      parsed?.contractId ?? null,
     );
     await prisma.authDecomposition.upsert({
       where: { transactionHash },
@@ -202,12 +295,17 @@ export async function processAaTransaction(
     });
   }
 
-  // 7. Fee-bump sponsorship
+  // 9. Fee-bump sponsorship
   const sponsorInfo = extractSponsorInfo(rawXdr);
   if (sponsorInfo.isFeeSponsored) {
     await recordSponsoredTransaction(
-      transactionHash, sponsorInfo.sponsorAccount!, sponsorInfo.sourceAccount!,
-      walletAddress, feeCharged, ledgerSequence, ledgerCloseTime,
+      transactionHash,
+      sponsorInfo.sponsorAccount!,
+      sponsorInfo.sourceAccount!,
+      walletAddress,
+      feeCharged,
+      ledgerSequence,
+      ledgerCloseTime,
     );
     if (walletAddress) {
       await prisma.smartWallet.update({
@@ -215,6 +313,55 @@ export async function processAaTransaction(
         data: { sponsoredTxCount: { increment: 1 } },
       });
     }
+  }
+
+  // 10. Passkey / secp256r1 signature inspection (non-blocking)
+  if (classification.authMethods.includes('passkey') || classification.walletType === 'passkey') {
+    void inspectSignature(transactionHash, ledgerSequence, rawXdr).catch(() => undefined);
+  }
+
+  // 11. Custom account (__check_auth) deep inspection (non-blocking)
+  if (
+    classification.authMethods.includes('multi_sig') ||
+    classification.walletType === 'custom' ||
+    classification.walletType === 'hybrid'
+  ) {
+    void inspectCustomAccount(transactionHash, ledgerSequence, rawXdr).catch(() => undefined);
+  }
+
+  // 12. Signer snapshot for threshold trend analysis
+  if (walletAddress && classification.signerCount !== null) {
+    await prisma.signerSnapshot
+      .create({
+        data: {
+          contractAddress: walletAddress,
+          signers: [
+            ...classification.sessionKeys.map((s) => s.address),
+            ...classification.guardians,
+          ] as unknown as object[],
+          highThreshold: classification.threshold ?? classification.signerCount,
+          ledgerSequence,
+        },
+      })
+      .catch(() => undefined);
+  }
+
+  // 13. Broadcast new smart wallet discovery over WebSocket
+  if (isNewWallet) {
+    broadcastEvent({
+      id: `aa:${walletAddress ?? sourceAccount}`,
+      contractAddress: walletAddress ?? sourceAccount,
+      eventType: 'smart_wallet_detected',
+      decoded: {
+        walletType: classification.walletType,
+        authMethods: classification.authMethods,
+        signerCount: classification.signerCount,
+        deployedAtLedger: ledgerSequence,
+      },
+      ledger: ledgerSequence,
+      ledgerCloseTime,
+      transactionHash,
+    });
   }
 }
 
@@ -230,6 +377,14 @@ async function recordSponsoredTransaction(
   await prisma.sponsoredTransaction.upsert({
     where: { transactionHash },
     update: {},
-    create: { transactionHash, sponsorAccount, sourceAccount, walletAddress, feeCharged, ledgerSequence, ledgerCloseTime },
+    create: {
+      transactionHash,
+      sponsorAccount,
+      sourceAccount,
+      walletAddress,
+      feeCharged,
+      ledgerSequence,
+      ledgerCloseTime,
+    },
   });
 }

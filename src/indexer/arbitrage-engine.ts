@@ -211,18 +211,18 @@ export function detectNegativeCycles(graph: PriceGraph, maxHops = 5): ArbitrageC
         const node = Array.from(graph.nodes.get(from) ?? []).find((n) => n.poolId === poolId);
         dexNames.push(node?.dexName ?? '');
 
-        const cycleKey = [...cyclePath].sort().join('-');
+        const cycleKey = [...path].sort().join('-');
         if (!seen.has(cycleKey)) {
           seen.add(cycleKey);
           const totalLogCost = poolIds.reduce((acc, pid, idx) => {
-            const tk = fullPath[idx];
-            const tkNext = fullPath[idx + 1];
+            const tk = path[idx];
+            const tkNext = path[idx + 1] ?? path[0];
             const w = graph.edges.get(`${tk}:${tkNext}:${pid}`) ?? 0;
             return acc + w;
           }, 0);
           const profitMultiplier = Math.exp(-totalLogCost);
           if (profitMultiplier > 1.0001) {
-            cycles.push({ path: fullPath, poolIds, dexNames, profitMultiplier });
+            cycles.push({ path, poolIds, dexNames, profitMultiplier });
           }
         }
       }
@@ -430,7 +430,7 @@ export async function simulateExecution(params: {
   });
   if (!opp) throw new Error(`Opportunity ${opportunityId} not found`);
 
-  const route = opp.route as RouteStep[];
+  const route = opp.route as unknown as RouteStep[];
   const profitPct = Number(opp.profitPercentage) / 100;
   const grossProfit = capital * profitPct;
   const estimatedGas = 0.5; // 0.5 XLM estimated gas per arb tx
@@ -578,8 +578,8 @@ export async function persistOpportunity(
       buyPrice: direct.buyPool.price,
       sellPrice: direct.sellPool.price,
       profitPercentage: direct.profitPercentage,
-      profitEstimate,
-      capitalRequired,
+      profitEstimate: profitEstimate.toString(),
+      capitalRequired: capitalRequired.toString(),
       confidence: direct.confidence,
       route: route as unknown as Prisma.InputJsonValue,
       status: 'active',
@@ -803,9 +803,9 @@ export async function detectSandwichAttacks(ledgerSeq: number): Promise<void> {
             victimTx: victim.hash,
             victimAddress: victim.sourceAccount,
             victimSlippage: slippagePct,
-            victimLoss: BigInt(Math.round(slippagePct * 100)),
+            victimLoss: String(Math.round(slippagePct * 100)),
             attackerAddress: front.sourceAccount,
-            attackerProfit: BigInt(Math.round(slippagePct * 90)),
+            attackerProfit: String(Math.round(slippagePct * 90)),
             frontRunTx: front.hash,
             backRunTx: back.hash,
             blockNumber: BigInt(ledgerSeq),
