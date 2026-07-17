@@ -90,26 +90,59 @@ export class SmtSolver {
     const actualTimeout = timeoutMs ?? this.config.timeoutMs;
     const workers = Math.min(this.config.workers ?? 4, smtQueries.length);
 
-    const batches: string[][] = [];
+    const results: SolverResult[] = new Array(smtQueries.length);
+    const workerPool = new Set<Promise<void>>();
+
+    const submitWork = async (index: number) => {
+      try {
+        results[index] = await this.solve(smtQueries[index], actualTimeout);
+      } catch (e: any) {
+        results[index] = { sat: null, timeMs: 0, error: e.message } as SolverResult;
+      }
+    };
+
     for (let i = 0; i < smtQueries.length; i += workers) {
-      batches.push(smtQueries.slice(i, i + workers));
+      const batch: Promise<void>[] = [];
+      for (let j = i; j < Math.min(i + workers, smtQueries.length); j++) {
+        const p = submitWork(j);
+        workerPool.add(p);
+        batch.push(p);
+      }
+      await Promise.all(batch);
     }
 
+    return results;
+  }
+
+  async solveDistributed(smtQueries: string[], timeoutMs?: number): Promise<SolverResult[]> {
+    const actualTimeout = timeoutMs ?? this.config.timeoutMs;
+    const numWorkers = this.config.workers ?? 4;
     const results: SolverResult[] = [];
-    for (const batch of batches) {
-      const batchResults = await Promise.all(
-        batch.map((q) =>
-          this.solve(q, actualTimeout).catch(
-            (e) =>
-              ({
-                sat: null,
-                timeMs: 0,
-                error: e.message,
-              }) as SolverResult,
+
+    const workerPromises: Promise<SolverResult[]>[] = [];
+    const queriesPerWorker = Math.ceil(smtQueries.length / numWorkers);
+
+    for (let w = 0; w < numWorkers; w++) {
+      const start = w * queriesPerWorker;
+      const end = Math.min(start + queriesPerWorker, smtQueries.length);
+      if (start >= smtQueries.length) break;
+
+      const workerQueries = smtQueries.slice(start, end);
+      const workerSolver = new SmtSolver({ ...this.config });
+      workerPromises.push(
+        Promise.all(
+          workerQueries.map((q) =>
+            workerSolver
+              .solve(q, actualTimeout)
+              .catch((e) => ({ sat: null, timeMs: 0, error: e.message }) as SolverResult),
           ),
         ),
       );
-      results.push(...batchResults);
+    }
+
+    const workerResults = await Promise.all(workerPromises);
+    for (const wr of workerResults) {
+      results.push(...wr);
     }
 
     return results;

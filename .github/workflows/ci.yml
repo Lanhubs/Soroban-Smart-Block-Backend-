@@ -79,3 +79,33 @@ jobs:
           console.log('Verification module loaded:', Object.keys(v).length, 'exports');
           console.log('Exports:', Object.keys(v).join(', '));
         "
+
+      - name: Property Verification Pipeline
+        run: npx ts-node -e "
+          const { SmtSolver, SpecCompiler, spec, invariant, eq, intVar } = require('./src/verification');
+          const solver = new SmtSolver({ timeoutMs: 30000 });
+          (async () => {
+            const healthy = await solver.healthCheck();
+            console.log('Solver health:', healthy ? 'OK' : 'UNAVAILABLE');
+
+            const compiler = new SpecCompiler({ incremental: true, produceUnsatCores: true });
+            const testSpec = spec('ci_verify', 'CAFEBABE', [
+              invariant('no_overflow', eq(intVar('x'), intVar('x'))),
+            ]);
+            const compiled = compiler.compile(testSpec);
+            console.log('SMT query size:', compiled.smtLib2.length, 'bytes');
+            console.log('Properties:', compiled.propertyMapping.length);
+
+            const result = await solver.solve(compiled.smtLib2, 10000);
+            console.log('Solver result:', result.sat === false ? 'VERIFIED' : result.sat === true ? 'VIOLATED' : 'UNKNOWN');
+            console.log('Solver time:', result.timeMs, 'ms');
+          })().catch(e => { console.error('Pipeline error:', e.message); process.exit(1); });
+        "
+
+      - name: Wasm CFG Extraction Check
+        run: npx ts-node -e "
+          const { WasmCfgExtractor } = require('./src/verification/wasm-cfg-extractor');
+          const extractor = new WasmCfgExtractor();
+          console.log('WasmCfgExtractor loaded successfully');
+          console.log('Available methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(extractor)).join(', '));
+        "
