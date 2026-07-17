@@ -9,5 +9,13 @@ declare namespace Express {
     };
     network: import('../profiles').NetworkName;
     networkProfile: import('../profiles').NetworkProfile;
+    user?: {
+      id: string;
+      address: string;
+      role: string;
+      tier: string;
+      sessionId: string;
+      appId?: string;
+    };
   }
 }

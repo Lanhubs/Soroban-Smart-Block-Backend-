@@ -3631,3 +3631,264 @@ model NftMarketplace {
 
   @@index([isActive])
 }
+
+// =========================================================================
+// Migration: 20250717000000_agent_system
+// =========================================================================
+
+enum AgentStatus {
+  deployed
+  validating
+  active
+  running
+  paused
+  terminated
+  archived
+}
+
+enum AgentMessageType {
+  request
+  negotiate
+  accept
+  reject
+  execute
+  complete
+  escalate
+  rate
+}
+
+enum AgentMessageStatus {
+  pending
+  delivered
+  acknowledged
+  rejected
+}
+
+enum AgentAlertType {
+  inactivity
+  high_failure_rate
+  budget_exceeded
+  circuit_break
+  verification_failure
+}
+
+enum AgentAlertSeverity {
+  info
+  warning
+  critical
+}
+
+model Agent {
+  id                   String      @id @default(uuid())
+  name                 String
+  description          String?
+  ownerAddress         String      @db.VarChar(100)
+  templateId           String?
+  status               AgentStatus @default(deployed)
+  permissions          Json        @default("[]")
+  resourceLimits       Json        @default("{}")
+  config               Json        @default("{}")
+  currentDrawdown      Decimal?    @db.Decimal(20, 7)
+  maxDrawdown          Decimal?    @db.Decimal(5, 2)
+  circuitBreakerTriggered Boolean  @default(false)
+  failureCount         Int         @default(0)
+  totalExecutions      Int         @default(0)
+  successfulExecutions Int         @default(0)
+  totalGasUsed         Decimal?    @db.Decimal(30, 7)
+  currentDayGasUsed    Decimal?    @db.Decimal(30, 7)
+  gasResetAt           DateTime?
+  lastExecutionAt      DateTime?
+  lastAlertAt          DateTime?
+  metadata             Json?
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+
+  executions    AgentExecution[]
+  messagesSent  AgentMessage[]    @relation("fromAgent")
+  messagesRecv  AgentMessage[]    @relation("toAgent")
+  registrations AgentRegistration[]
+  ratingsGiven  AgentRating[]     @relation("raterAgent")
+  ratingsRecv   AgentRating[]     @relation("ratedAgent")
+  escalations   AgentEscalation[]
+  alerts        AgentAlert[]
+
+  @@index([ownerAddress])
+  @@index([status])
+  @@index([templateId])
+  @@map("agents")
+}
+
+model AgentTemplate {
+  id            String   @id @default(uuid())
+  name          String
+  description   String
+  category      String   @db.VarChar(50)
+  version       String
+  author        String   @db.VarChar(100)
+  price         Decimal? @db.Decimal(20, 7)
+  configSchema  Json
+  wasmBase64    String   @db.Text
+  abi           Json
+  defaultPermissions Json @default("[]")
+  defaultLimits      Json @default("{}")
+  isPublished   Boolean  @default(false)
+  downloadCount Int      @default(0)
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([category])
+  @@index([isPublished])
+  @@map("agent_templates")
+}
+
+model AgentExecution {
+  id            String   @id @default(uuid())
+  agentId       String
+  status        String   @default("running") @db.VarChar(20)
+  trigger       String   @default("scheduled") @db.VarChar(20)
+  inputState    Json
+  decision      Json?
+  outputAction  Json?
+  reasoning     Json?
+  gasUsed       Decimal? @db.Decimal(30, 7)
+  storageUsed   Int?
+  error         String?  @db.Text
+  trace         Json?
+  traceHash     String?
+  signature     String?  @db.Text
+  verifiedBy    Int      @default(0)
+  verifiedCount Int      @default(0)
+  flaggedCount  Int      @default(0)
+  isVerified    Boolean?
+  createdAt     DateTime @default(now())
+  completedAt   DateTime?
+
+  agent       Agent              @relation(fields: [agentId], references: [id])
+  ratings     AgentRating[]
+  verifications AgentVerification[]
+
+  @@index([agentId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([traceHash])
+  @@map("agent_executions")
+}
+
+model AgentMessage {
+  id            String            @id @default(uuid())
+  fromAgentId   String
+  toAgentId     String
+  type          AgentMessageType  @default(request)
+  subject       String
+  body          Json
+  status        AgentMessageStatus @default(pending)
+  signature     String?           @db.Text
+  responseToId  String?
+  createdAt     DateTime          @default(now())
+  respondedAt   DateTime?
+
+  fromAgent Agent @relation("fromAgent", fields: [fromAgentId], references: [id])
+  toAgent   Agent @relation("toAgent", fields: [toAgentId], references: [id])
+
+  @@index([fromAgentId])
+  @@index([toAgentId])
+  @@index([type])
+  @@index([status])
+  @@map("agent_messages")
+}
+
+model AgentRegistration {
+  id            String   @id @default(uuid())
+  agentId       String   @unique
+  capabilities  Json
+  pricePerCall  Decimal? @db.Decimal(20, 7)
+  pricePerMonth Decimal? @db.Decimal(20, 7)
+  isActive      Boolean  @default(true)
+  rating        Decimal  @default(0) @db.Decimal(3, 2)
+  totalRatings  Int      @default(0)
+  totalJobsDone Int      @default(0)
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  agent Agent @relation(fields: [agentId], references: [id])
+
+  @@index([isActive])
+  @@index([rating])
+  @@map("agent_registrations")
+}
+
+model AgentRating {
+  id          String   @id @default(uuid())
+  fromAgentId String
+  toAgentId   String
+  executionId String?
+  score       Int
+  review      String?  @db.Text
+  createdAt   DateTime @default(now())
+
+  fromAgent  Agent           @relation("raterAgent", fields: [fromAgentId], references: [id])
+  toAgent    Agent           @relation("ratedAgent", fields: [toAgentId], references: [id])
+  execution  AgentExecution? @relation(fields: [executionId], references: [id])
+
+  @@index([toAgentId])
+  @@index([fromAgentId])
+  @@map("agent_ratings")
+}
+
+model AgentEscalation {
+  id              String   @id @default(uuid())
+  agentId         String
+  context         Json
+  proposedActions Json
+  status          String   @default("pending") @db.VarChar(20)
+  resolvedBy      String?  @db.VarChar(100)
+  resolution      Json?
+  createdAt       DateTime @default(now())
+  resolvedAt      DateTime?
+
+  agent Agent @relation(fields: [agentId], references: [id])
+
+  @@index([agentId])
+  @@index([status])
+  @@map("agent_escalations")
+}
+
+model AgentAlert {
+  id          String             @id @default(uuid())
+  agentId     String
+  type        AgentAlertType
+  severity    AgentAlertSeverity @default(warning)
+  message     String             @db.Text
+  data        Json?
+  acknowledged Boolean           @default(false)
+  createdAt   DateTime           @default(now())
+  acknowledgedAt DateTime?
+
+  agent Agent @relation(fields: [agentId], references: [id])
+
+  @@index([agentId])
+  @@index([type])
+  @@index([severity])
+  @@index([acknowledged])
+  @@map("agent_alerts")
+}
+
+model AgentVerification {
+  id            String   @id @default(uuid())
+  executionId   String
+  verifierNode  String   @db.VarChar(100)
+  status        String   @default("pending") @db.VarChar(20)
+  discrepancy   Json?
+  signature     String?  @db.Text
+  verifiedAt    DateTime?
+  createdAt     DateTime @default(now())
+
+  execution AgentExecution @relation(fields: [executionId], references: [id])
+
+  @@unique([executionId, verifierNode])
+  @@index([executionId])
+  @@index([status])
+  @@map("agent_verifications")
+}
